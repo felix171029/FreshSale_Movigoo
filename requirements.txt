@@ -1,0 +1,15 @@
+# ================================================================
+# DEPENDENCIAS DEL ETL FRESHSALE -> SQL SERVER
+# ================================================================
+
+# Cliente HTTP
+requests>=2.31.0
+
+# SQL Server driver
+pyodbc>=5.0.0
+
+# Variables de entorno
+python-dotenv>=1.0.0
+
+# Parser de fechas
+python-dateutil>=2.8.2

@@ -1,0 +1,69 @@
+# ================================================================
+# GITIGNORE para ETL Freshsale -> SQL Server
+# ================================================================
+
+# Credenciales y configuración sensible
+.env
+*.env
+!.env.example
+
+# Entorno virtual de Python
+venv/
+env/
+ENV/
+.venv/
+
+# Archivos de Python compilados
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+
+# Logs
+*.log
+etl_*.log
+*.log.*
+
+# Archivos de prueba y samples
+sample_*.json
+test_*.json
+
+# IDEs
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Backups y temporales
+*.bak
+*.tmp
+*.backup
+backup/
+
+# Certificados
+*.pem
+*.key
+*.crt
+
+# Datos sensibles
+credentials.json
+secrets.json
+config_local.py
+
+# Base de datos local (si la hay)
+*.db
+*.sqlite
+*.sqlite3
+
+# Reportes y outputs
+reports/
+output/
+downloads/
+
+# Archivos de configuración específicos del usuario
+local_settings.py
+.env.local
+.env.production
