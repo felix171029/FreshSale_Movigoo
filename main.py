@@ -36,7 +36,13 @@ def self_update():
         text=True
     )
     if result.returncode == 0:
-        print(f"   {result.stdout.strip()}")
+        output = result.stdout.strip()
+        print(f"   {output}")
+        # Si hubo cambios, limpiar .pyc para forzar recompilación
+        if output != "Already up to date.":
+            for pyc in script_dir.rglob("*.pyc"):
+                pyc.unlink(missing_ok=True)
+            print("   🧹 Cleaned .pyc cache")
     else:
         print(f"   ⚠️  git pull failed: {result.stderr.strip()} (continuing anyway)")
 
