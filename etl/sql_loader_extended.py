@@ -65,14 +65,11 @@ def upsert_contacts(loader, contacts: List[Dict]) -> Dict[str, int]:
 
         if insert_data:
             logger.info(f"Bulk inserting {len(insert_data)} contacts to temp table...")
-            cursor.fast_executemany = True
-            cursor.executemany("""
-                INSERT INTO #temp_contacts
-                (id, first_name, last_name, display_name, email, mobile_number,
-                 work_number, job_title, address, city, state, zipcode, country,
-                 owner_id, sales_account_id, created_at, updated_at, is_deleted)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """, insert_data)
+            loader._bulk_insert(cursor, "#temp_contacts", [
+                "id","first_name","last_name","display_name","email","mobile_number",
+                "work_number","job_title","address","city","state","zipcode","country",
+                "owner_id","sales_account_id","created_at","updated_at","is_deleted"
+            ], insert_data)
 
         logger.info("Executing MERGE operation...")
         cursor.execute("""
@@ -200,15 +197,12 @@ def upsert_sales_accounts(loader, accounts: List[Dict]) -> Dict[str, int]:
         # 3. Bulk insert a tabla temporal
         if insert_data:
             logger.info(f"Bulk inserting {len(insert_data)} accounts to temp table...")
-            cursor.fast_executemany = True
-            cursor.executemany("""
-                INSERT INTO #temp_sales_accounts
-                (id, name, address, city, state, zipcode, country,
-                 industry_type_id, business_type_id, number_of_employees,
-                 annual_revenue, website, phone, owner_id, facebook,
-                 twitter, linkedin, territory_id, created_at, updated_at, is_deleted)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """, insert_data)
+            loader._bulk_insert(cursor, "#temp_sales_accounts", [
+                "id","name","address","city","state","zipcode","country",
+                "industry_type_id","business_type_id","number_of_employees",
+                "annual_revenue","website","phone","owner_id","facebook",
+                "twitter","linkedin","territory_id","created_at","updated_at","is_deleted"
+            ], insert_data)
 
         # 4. MERGE desde tabla temporal a tabla final
         logger.info("Executing MERGE operation...")
@@ -321,12 +315,10 @@ def upsert_tasks(loader, tasks: List[Dict]) -> Dict[str, int]:
 
         if insert_data:
             logger.info(f"Bulk inserting {len(insert_data)} tasks...")
-            cursor.fast_executemany = True
-            cursor.executemany("""
-                INSERT INTO #temp_tasks (id, title, description, due_date, status, owner_id,
-                 creator_id, targetable_type, targetable_id, created_at, updated_at, completed_at, is_deleted)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """, insert_data)
+            loader._bulk_insert(cursor, "#temp_tasks", [
+                "id","title","description","due_date","status","owner_id",
+                "creator_id","targetable_type","targetable_id","created_at","updated_at","completed_at","is_deleted"
+            ], insert_data)
 
         logger.info("Executing MERGE...")
         cursor.execute("""
@@ -404,12 +396,10 @@ def upsert_appointments(loader, appointments: List[Dict]) -> Dict[str, int]:
                 stats["failed"] += 1
 
         if insert_data:
-            cursor.fast_executemany = True
-            cursor.executemany("""
-                INSERT INTO #temp_appointments (id, title, description, from_date, end_date, time_zone,
-                 location, creator_id, owner_id, targetable_type, targetable_id, created_at, updated_at, is_deleted)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """, insert_data)
+            loader._bulk_insert(cursor, "#temp_appointments", [
+                "id","title","description","from_date","end_date","time_zone",
+                "location","creator_id","owner_id","targetable_type","targetable_id","created_at","updated_at","is_deleted"
+            ], insert_data)
 
         cursor.execute("""
             MERGE freshsale.appointments AS target
@@ -482,11 +472,10 @@ def upsert_sales_activities(loader, activities: List[Dict]) -> Dict[str, int]:
                 stats["failed"] += 1
 
         if insert_data:
-            cursor.fast_executemany = True
-            cursor.executemany("""INSERT INTO #temp_sales_activities
-                (id, title, description, start_date, end_date, owner_id, creator_id, targetable_type,
-                 targetable_id, sales_activity_type_id, sales_activity_outcome_id, created_at, updated_at, is_deleted)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""", insert_data)
+            loader._bulk_insert(cursor, "#temp_sales_activities", [
+                "id","title","description","start_date","end_date","owner_id","creator_id","targetable_type",
+                "targetable_id","sales_activity_type_id","sales_activity_outcome_id","created_at","updated_at","is_deleted"
+            ], insert_data)
 
         cursor.execute("""MERGE freshsale.sales_activities AS target
             USING #temp_sales_activities AS source ON target.id = source.id
@@ -561,12 +550,11 @@ def upsert_leads(loader, leads: List[Dict]) -> Dict[str, int]:
                 stats["failed"] += 1
 
         if insert_data:
-            cursor.fast_executemany = True
-            cursor.executemany("""INSERT INTO #temp_leads
-                (id, first_name, last_name, display_name, email, mobile_number, work_number,
-                 job_title, address, city, state, zipcode, country, owner_id, lead_source_id,
-                 territory_id, created_at, updated_at, is_deleted)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""", insert_data)
+            loader._bulk_insert(cursor, "#temp_leads", [
+                "id","first_name","last_name","display_name","email","mobile_number","work_number",
+                "job_title","address","city","state","zipcode","country","owner_id","lead_source_id",
+                "territory_id","created_at","updated_at","is_deleted"
+            ], insert_data)
 
         cursor.execute("""MERGE freshsale.leads AS target
             USING #temp_leads AS source ON target.id = source.id
@@ -632,9 +620,9 @@ def upsert_pipelines(loader, pipelines: List[Dict]) -> Dict[str, int]:
                 stats["failed"] += 1
 
         if insert_data:
-            cursor.fast_executemany = True
-            cursor.executemany("""INSERT INTO #temp_pipelines (id, name, is_default, created_at, updated_at)
-                VALUES (?, ?, ?, ?, ?)""", insert_data)
+            loader._bulk_insert(cursor, "#temp_pipelines", [
+                "id","name","is_default","created_at","updated_at"
+            ], insert_data)
 
         cursor.execute("""MERGE freshsale.pipelines AS target
             USING #temp_pipelines AS source ON target.id = source.id
@@ -704,12 +692,10 @@ def upsert_stages(loader, stages: List[Dict]) -> Dict[str, int]:
                 updated_at
             ))
 
-        # Insert individual para evitar problemas de buffer
         if insert_data:
-            for row in insert_data:
-                cursor.execute("""INSERT INTO #temp_stages
-                    (id, name, pipeline_id, position, probability, type, created_at, updated_at)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)""", row)
+            loader._bulk_insert(cursor, "#temp_stages", [
+                "id","name","pipeline_id","position","probability","type","created_at","updated_at"
+            ], insert_data)
 
         # MERGE de tabla temporal a tabla final
         cursor.execute("""MERGE freshsale.stages AS target
@@ -790,12 +776,10 @@ def upsert_products(loader, products: List[Dict]) -> Dict[str, int]:
                 product.get("active") == False  # is_deleted (inverso de active)
             ))
 
-        # Insert individual para evitar problemas de buffer
         if insert_data:
-            for row in insert_data:
-                cursor.execute("""INSERT INTO #temp_products
-                    (id, name, description, price, currency, sku_number, created_at, updated_at, is_deleted)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""", row)
+            loader._bulk_insert(cursor, "#temp_products", [
+                "id","name","description","price","currency","sku_number","created_at","updated_at","is_deleted"
+            ], insert_data)
 
         # MERGE de tabla temporal a tabla final
         cursor.execute("""MERGE freshsale.products AS target
@@ -861,10 +845,9 @@ def upsert_forecast_categories(loader, categories: List[Dict]) -> Dict[str, int]
                 1 if cat.get("is_default") else 0
             ))
 
-        # Insertar individualmente para evitar problemas de buffer
-        for row in insert_data:
-            cursor.execute("""INSERT INTO #temp_forecast_categories
-                (id, name, position, is_default) VALUES (?, ?, ?, ?)""", row)
+        loader._bulk_insert(cursor, "#temp_forecast_categories", [
+            "id","name","position","is_default"
+        ], insert_data)
 
         cursor.execute("""MERGE freshsale.forecast_categories AS target
             USING #temp_forecast_categories AS source ON target.id = source.id
@@ -925,10 +908,9 @@ def upsert_deal_predictions(loader, predictions: List[Dict]) -> Dict[str, int]:
                 1 if pred.get("is_default") else 0
             ))
 
-        # Insertar individualmente para evitar problemas de buffer
-        for row in insert_data:
-            cursor.execute("""INSERT INTO #temp_deal_predictions
-                (id, name, position, is_default) VALUES (?, ?, ?, ?)""", row)
+        loader._bulk_insert(cursor, "#temp_deal_predictions", [
+            "id","name","position","is_default"
+        ], insert_data)
 
         cursor.execute("""MERGE freshsale.deal_predictions AS target
             USING #temp_deal_predictions AS source ON target.id = source.id
@@ -990,10 +972,9 @@ def upsert_deal_products(loader, deal_products: List[Dict]) -> Dict[str, int]:
                 stats["failed"] += 1
 
         if insert_data:
-            cursor.fast_executemany = True
-            cursor.executemany("""INSERT INTO #temp_deal_products
-                (id, deal_id, product_id, quantity, unit_price, discount, total, created_at, updated_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""", insert_data)
+            loader._bulk_insert(cursor, "#temp_deal_products", [
+                "id","deal_id","product_id","quantity","unit_price","discount","total","created_at","updated_at"
+            ], insert_data)
 
         cursor.execute("""MERGE freshsale.deal_products AS target
             USING #temp_deal_products AS source ON target.id = source.id

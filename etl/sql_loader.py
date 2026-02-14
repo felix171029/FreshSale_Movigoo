@@ -2,7 +2,7 @@
 Módulo de carga de datos a SQL Server
 """
 
-import pyodbc
+import pymssql
 import logging
 from typing import Dict, List, Any, Optional
 from datetime import datetime
@@ -15,14 +15,14 @@ logger = logging.getLogger(__name__)
 class SQLServerLoader:
     """Carga datos en SQL Server"""
 
-    def __init__(self, connection_string: str):
+    def __init__(self, connection_params: dict):
         """
         Inicializa el loader de SQL Server
 
         Args:
-            connection_string: Connection string de SQL Server
+            connection_params: Diccionario con parámetros de conexión pymssql
         """
-        self.connection_string = connection_string
+        self.connection_params = connection_params
         self.connection = None
         self.stats = {
             "inserted": 0,
@@ -34,13 +34,356 @@ class SQLServerLoader:
         """Establece conexión con SQL Server"""
         try:
             logger.info("Connecting to SQL Server...")
-            self.connection = pyodbc.connect(self.connection_string)
-            self.connection.autocommit = False
+            self.connection = pymssql.connect(**self.connection_params)
+            self.connection.autocommit(False)
             logger.info("Connected successfully")
+            self.ensure_schema_exists()
             return True
         except Exception as e:
             logger.error(f"Failed to connect to SQL Server: {str(e)}")
             return False
+
+    def ensure_schema_exists(self):
+        """Crea el schema y todas las tablas si no existen, con estructura exacta del servidor"""
+        cursor = self.connection.cursor()
+        try:
+            ddl_statements = [
+                # Schema
+                "IF NOT EXISTS (SELECT * FROM sys.schemas WHERE name = 'freshsale') EXEC('CREATE SCHEMA freshsale')",
+
+                # etl_control
+                """IF NOT EXISTS (SELECT * FROM sys.objects WHERE object_id = OBJECT_ID(N'freshsale.etl_control') AND type = 'U')
+                CREATE TABLE freshsale.etl_control (
+                    id INT IDENTITY(1,1) NOT NULL PRIMARY KEY,
+                    entity_name NVARCHAR(100) NOT NULL,
+                    last_execution_date DATETIME NOT NULL,
+                    execution_status NVARCHAR(50) NOT NULL,
+                    records_extracted INT NULL,
+                    records_inserted INT NULL,
+                    records_updated INT NULL,
+                    records_failed INT NULL,
+                    error_message NVARCHAR(MAX) NULL,
+                    execution_duration_seconds INT NULL,
+                    created_at DATETIME NULL DEFAULT GETDATE()
+                )""",
+
+                # etl_log
+                """IF NOT EXISTS (SELECT * FROM sys.objects WHERE object_id = OBJECT_ID(N'freshsale.etl_log') AND type = 'U')
+                CREATE TABLE freshsale.etl_log (
+                    id INT IDENTITY(1,1) NOT NULL PRIMARY KEY,
+                    entity_name NVARCHAR(100) NOT NULL,
+                    log_level NVARCHAR(20) NOT NULL,
+                    message NVARCHAR(MAX) NOT NULL,
+                    record_id BIGINT NULL,
+                    created_at DATETIME NULL DEFAULT GETDATE()
+                )""",
+
+                # users (antes que team_users)
+                """IF NOT EXISTS (SELECT * FROM sys.objects WHERE object_id = OBJECT_ID(N'freshsale.users') AND type = 'U')
+                CREATE TABLE freshsale.users (
+                    id BIGINT NOT NULL PRIMARY KEY,
+                    display_name NVARCHAR(500) NULL,
+                    email NVARCHAR(200) NULL,
+                    is_active BIT NULL DEFAULT 1,
+                    work_number NVARCHAR(50) NULL,
+                    mobile_number NVARCHAR(50) NULL,
+                    etl_created_at DATETIME NULL DEFAULT GETDATE(),
+                    etl_updated_at DATETIME NULL DEFAULT GETDATE()
+                )""",
+
+                # teams (antes que team_users)
+                """IF NOT EXISTS (SELECT * FROM sys.objects WHERE object_id = OBJECT_ID(N'freshsale.teams') AND type = 'U')
+                CREATE TABLE freshsale.teams (
+                    id BIGINT NOT NULL PRIMARY KEY,
+                    name NVARCHAR(500) NOT NULL,
+                    etl_created_at DATETIME NULL DEFAULT GETDATE(),
+                    etl_updated_at DATETIME NULL DEFAULT GETDATE()
+                )""",
+
+                # team_users (sin FK para coincidir con script.sql)
+                """IF NOT EXISTS (SELECT * FROM sys.objects WHERE object_id = OBJECT_ID(N'freshsale.team_users') AND type = 'U')
+                CREATE TABLE freshsale.team_users (
+                    id INT IDENTITY(1,1) NOT NULL PRIMARY KEY,
+                    team_id BIGINT NOT NULL,
+                    user_id BIGINT NOT NULL,
+                    etl_created_at DATETIME NULL DEFAULT GETDATE(),
+                    CONSTRAINT UQ_team_user UNIQUE (team_id, user_id)
+                )""",
+
+                # pipelines (antes que stages)
+                """IF NOT EXISTS (SELECT * FROM sys.objects WHERE object_id = OBJECT_ID(N'freshsale.pipelines') AND type = 'U')
+                CREATE TABLE freshsale.pipelines (
+                    id BIGINT NOT NULL PRIMARY KEY,
+                    name NVARCHAR(500) NOT NULL,
+                    is_default BIT NULL DEFAULT 0,
+                    created_at DATETIME NULL,
+                    updated_at DATETIME NULL,
+                    etl_created_at DATETIME NULL DEFAULT GETDATE(),
+                    etl_updated_at DATETIME NULL DEFAULT GETDATE()
+                )""",
+
+                # stages
+                """IF NOT EXISTS (SELECT * FROM sys.objects WHERE object_id = OBJECT_ID(N'freshsale.stages') AND type = 'U')
+                CREATE TABLE freshsale.stages (
+                    id BIGINT NOT NULL PRIMARY KEY,
+                    name NVARCHAR(500) NOT NULL,
+                    pipeline_id BIGINT NULL,
+                    position BIGINT NULL,
+                    probability BIGINT NULL,
+                    type NVARCHAR(100) NULL,
+                    created_at DATETIME NULL,
+                    updated_at DATETIME NULL,
+                    etl_created_at DATETIME NULL DEFAULT GETDATE(),
+                    etl_updated_at DATETIME NULL DEFAULT GETDATE()
+                )""",
+
+                # deals (antes que deal_products)
+                """IF NOT EXISTS (SELECT * FROM sys.objects WHERE object_id = OBJECT_ID(N'freshsale.deals') AND type = 'U')
+                CREATE TABLE freshsale.deals (
+                    id BIGINT NOT NULL PRIMARY KEY,
+                    name NVARCHAR(MAX) NOT NULL,
+                    amount FLOAT NULL,
+                    base_currency_amount FLOAT NULL,
+                    expected_close DATE NULL,
+                    closed_date DATE NULL,
+                    stage_updated_time DATETIME NULL,
+                    probability BIGINT NULL,
+                    updated_at DATETIME NULL,
+                    created_at DATETIME NULL,
+                    deal_pipeline_id BIGINT NULL,
+                    deal_stage_id BIGINT NULL,
+                    age BIGINT NULL,
+                    recent_note NVARCHAR(MAX) NULL,
+                    expected_deal_value FLOAT NULL,
+                    is_deleted BIT NULL DEFAULT 0,
+                    forecast_category BIGINT NULL,
+                    deal_prediction BIGINT NULL,
+                    deal_prediction_last_updated_at DATETIME NULL,
+                    has_products BIT NULL DEFAULT 0,
+                    rotten_days BIGINT NULL,
+                    last_assigned_at DATETIME NULL,
+                    cf_pais NVARCHAR(MAX) NULL,
+                    cf_integrador NVARCHAR(MAX) NULL,
+                    cf_one_time_setup FLOAT NULL,
+                    cf_nro_de_meses BIGINT NULL,
+                    cf_tipo_de_servicio NVARCHAR(MAX) NULL,
+                    cf_explique_prdida NVARCHAR(MAX) NULL,
+                    cf_valor_total_de_contrato FLOAT NULL,
+                    etl_created_at DATETIME NULL DEFAULT GETDATE(),
+                    etl_updated_at DATETIME NULL DEFAULT GETDATE(),
+                    last_contacted_sales_activity_mode NVARCHAR(MAX) NULL,
+                    last_contacted_via_sales_activity DATETIME NULL,
+                    web_form_id BIGINT NULL,
+                    upcoming_activities_time DATETIME NULL
+                )""",
+
+                # deal_products (sin FK a deals para coincidir con script.sql)
+                """IF NOT EXISTS (SELECT * FROM sys.objects WHERE object_id = OBJECT_ID(N'freshsale.deal_products') AND type = 'U')
+                CREATE TABLE freshsale.deal_products (
+                    id BIGINT IDENTITY(1,1) NOT NULL PRIMARY KEY,
+                    deal_id BIGINT NOT NULL,
+                    product_id BIGINT NULL,
+                    product_name NVARCHAR(500) NULL,
+                    quantity FLOAT NULL,
+                    unit_price FLOAT NULL,
+                    total_price FLOAT NULL,
+                    discount FLOAT NULL,
+                    description NVARCHAR(MAX) NULL,
+                    etl_created_at DATETIME NULL DEFAULT GETDATE(),
+                    etl_updated_at DATETIME NULL DEFAULT GETDATE(),
+                    freshsale_id BIGINT NULL
+                )""",
+
+                # contacts
+                """IF NOT EXISTS (SELECT * FROM sys.objects WHERE object_id = OBJECT_ID(N'freshsale.contacts') AND type = 'U')
+                CREATE TABLE freshsale.contacts (
+                    id BIGINT NOT NULL PRIMARY KEY,
+                    first_name NVARCHAR(200) NULL,
+                    last_name NVARCHAR(200) NULL,
+                    display_name NVARCHAR(500) NULL,
+                    email NVARCHAR(200) NULL,
+                    mobile_number NVARCHAR(50) NULL,
+                    work_number NVARCHAR(50) NULL,
+                    job_title NVARCHAR(200) NULL,
+                    address NVARCHAR(500) NULL,
+                    city NVARCHAR(100) NULL,
+                    state NVARCHAR(100) NULL,
+                    zipcode NVARCHAR(20) NULL,
+                    country NVARCHAR(100) NULL,
+                    owner_id BIGINT NULL,
+                    sales_account_id BIGINT NULL,
+                    created_at DATETIME NULL,
+                    updated_at DATETIME NULL,
+                    is_deleted BIT NULL DEFAULT 0,
+                    etl_created_at DATETIME NULL DEFAULT GETDATE(),
+                    etl_updated_at DATETIME NULL DEFAULT GETDATE()
+                )""",
+
+                # sales_accounts
+                """IF NOT EXISTS (SELECT * FROM sys.objects WHERE object_id = OBJECT_ID(N'freshsale.sales_accounts') AND type = 'U')
+                CREATE TABLE freshsale.sales_accounts (
+                    id BIGINT NOT NULL PRIMARY KEY,
+                    name NVARCHAR(500) NOT NULL,
+                    address NVARCHAR(500) NULL,
+                    city NVARCHAR(100) NULL,
+                    state NVARCHAR(100) NULL,
+                    zipcode NVARCHAR(20) NULL,
+                    country NVARCHAR(100) NULL,
+                    industry_type_id BIGINT NULL,
+                    business_type_id BIGINT NULL,
+                    number_of_employees BIGINT NULL,
+                    annual_revenue FLOAT NULL,
+                    website NVARCHAR(500) NULL,
+                    phone NVARCHAR(50) NULL,
+                    owner_id BIGINT NULL,
+                    facebook NVARCHAR(200) NULL,
+                    twitter NVARCHAR(200) NULL,
+                    linkedin NVARCHAR(200) NULL,
+                    territory_id BIGINT NULL,
+                    created_at DATETIME NULL,
+                    updated_at DATETIME NULL,
+                    is_deleted BIT NULL DEFAULT 0,
+                    etl_created_at DATETIME NULL DEFAULT GETDATE(),
+                    etl_updated_at DATETIME NULL DEFAULT GETDATE()
+                )""",
+
+                # leads
+                """IF NOT EXISTS (SELECT * FROM sys.objects WHERE object_id = OBJECT_ID(N'freshsale.leads') AND type = 'U')
+                CREATE TABLE freshsale.leads (
+                    id BIGINT NOT NULL PRIMARY KEY,
+                    first_name NVARCHAR(200) NULL,
+                    last_name NVARCHAR(200) NULL,
+                    display_name NVARCHAR(500) NULL,
+                    email NVARCHAR(200) NULL,
+                    mobile_number NVARCHAR(50) NULL,
+                    work_number NVARCHAR(50) NULL,
+                    job_title NVARCHAR(200) NULL,
+                    lead_source_id BIGINT NULL,
+                    lead_stage_id BIGINT NULL,
+                    owner_id BIGINT NULL,
+                    company_name NVARCHAR(500) NULL,
+                    territory_id BIGINT NULL,
+                    created_at DATETIME NULL,
+                    updated_at DATETIME NULL,
+                    is_deleted BIT NULL DEFAULT 0,
+                    etl_created_at DATETIME NULL DEFAULT GETDATE(),
+                    etl_updated_at DATETIME NULL DEFAULT GETDATE()
+                )""",
+
+                # tasks
+                """IF NOT EXISTS (SELECT * FROM sys.objects WHERE object_id = OBJECT_ID(N'freshsale.tasks') AND type = 'U')
+                CREATE TABLE freshsale.tasks (
+                    id BIGINT NOT NULL PRIMARY KEY,
+                    title NVARCHAR(500) NULL,
+                    description NVARCHAR(MAX) NULL,
+                    due_date DATETIME NULL,
+                    status NVARCHAR(50) NULL,
+                    owner_id BIGINT NULL,
+                    creator_id BIGINT NULL,
+                    targetable_type NVARCHAR(100) NULL,
+                    targetable_id BIGINT NULL,
+                    created_at DATETIME NULL,
+                    updated_at DATETIME NULL,
+                    completed_at DATETIME NULL,
+                    is_deleted BIT NULL DEFAULT 0,
+                    etl_created_at DATETIME NULL DEFAULT GETDATE(),
+                    etl_updated_at DATETIME NULL DEFAULT GETDATE()
+                )""",
+
+                # appointments
+                """IF NOT EXISTS (SELECT * FROM sys.objects WHERE object_id = OBJECT_ID(N'freshsale.appointments') AND type = 'U')
+                CREATE TABLE freshsale.appointments (
+                    id BIGINT NOT NULL PRIMARY KEY,
+                    title NVARCHAR(500) NULL,
+                    description NVARCHAR(MAX) NULL,
+                    from_date DATETIME NULL,
+                    end_date DATETIME NULL,
+                    time_zone NVARCHAR(100) NULL,
+                    location NVARCHAR(500) NULL,
+                    creator_id BIGINT NULL,
+                    owner_id BIGINT NULL,
+                    targetable_type NVARCHAR(100) NULL,
+                    targetable_id BIGINT NULL,
+                    created_at DATETIME NULL,
+                    updated_at DATETIME NULL,
+                    is_deleted BIT NULL DEFAULT 0,
+                    etl_created_at DATETIME NULL DEFAULT GETDATE(),
+                    etl_updated_at DATETIME NULL DEFAULT GETDATE()
+                )""",
+
+                # sales_activities (columnas según script.sql: notes + activity_type)
+                """IF NOT EXISTS (SELECT * FROM sys.objects WHERE object_id = OBJECT_ID(N'freshsale.sales_activities') AND type = 'U')
+                CREATE TABLE freshsale.sales_activities (
+                    id BIGINT NOT NULL PRIMARY KEY,
+                    title NVARCHAR(500) NULL,
+                    notes NVARCHAR(MAX) NULL,
+                    activity_type NVARCHAR(100) NULL,
+                    start_date DATETIME NULL,
+                    end_date DATETIME NULL,
+                    owner_id BIGINT NULL,
+                    creator_id BIGINT NULL,
+                    targetable_type NVARCHAR(100) NULL,
+                    targetable_id BIGINT NULL,
+                    created_at DATETIME NULL,
+                    updated_at DATETIME NULL,
+                    is_deleted BIT NULL DEFAULT 0,
+                    etl_created_at DATETIME NULL DEFAULT GETDATE(),
+                    etl_updated_at DATETIME NULL DEFAULT GETDATE()
+                )""",
+
+                # products
+                """IF NOT EXISTS (SELECT * FROM sys.objects WHERE object_id = OBJECT_ID(N'freshsale.products') AND type = 'U')
+                CREATE TABLE freshsale.products (
+                    id BIGINT NOT NULL PRIMARY KEY,
+                    name NVARCHAR(500) NOT NULL,
+                    description NVARCHAR(MAX) NULL,
+                    price FLOAT NULL,
+                    currency NVARCHAR(10) NULL,
+                    sku_number NVARCHAR(200) NULL,
+                    created_at DATETIME NULL,
+                    updated_at DATETIME NULL,
+                    is_deleted BIT NULL DEFAULT 0,
+                    etl_created_at DATETIME NULL DEFAULT GETDATE(),
+                    etl_updated_at DATETIME NULL DEFAULT GETDATE()
+                )""",
+
+                # forecast_categories
+                """IF NOT EXISTS (SELECT * FROM sys.objects WHERE object_id = OBJECT_ID(N'freshsale.forecast_categories') AND type = 'U')
+                CREATE TABLE freshsale.forecast_categories (
+                    id BIGINT NOT NULL PRIMARY KEY,
+                    name NVARCHAR(200) NOT NULL,
+                    position INT NULL,
+                    is_default BIT NULL DEFAULT 0,
+                    etl_created_at DATETIME NULL DEFAULT GETDATE(),
+                    etl_updated_at DATETIME NULL DEFAULT GETDATE()
+                )""",
+
+                # deal_predictions
+                """IF NOT EXISTS (SELECT * FROM sys.objects WHERE object_id = OBJECT_ID(N'freshsale.deal_predictions') AND type = 'U')
+                CREATE TABLE freshsale.deal_predictions (
+                    id BIGINT NOT NULL PRIMARY KEY,
+                    name NVARCHAR(200) NOT NULL,
+                    position INT NULL,
+                    is_default BIT NULL DEFAULT 0,
+                    etl_created_at DATETIME NULL DEFAULT GETDATE(),
+                    etl_updated_at DATETIME NULL DEFAULT GETDATE()
+                )""",
+            ]
+
+            for ddl in ddl_statements:
+                try:
+                    cursor.execute(ddl)
+                except Exception as e:
+                    logger.warning(f"DDL warning (puede ignorarse si la tabla ya existe): {str(e)}")
+
+            self.connection.commit()
+            logger.info("Schema verificado/creado exitosamente")
+
+        except Exception as e:
+            logger.error(f"Error al verificar/crear schema: {str(e)}")
+            self.connection.rollback()
+        finally:
+            cursor.close()
 
     def disconnect(self):
         """Cierra conexión con SQL Server"""
@@ -63,19 +406,35 @@ class SQLServerLoader:
         if not date_string:
             return None
 
-        if isinstance(date_string, datetime):
-            return date_string
+        SQL_SERVER_MIN_DATE = datetime(1753, 1, 1)
+        SQL_SERVER_MAX_DATE = datetime(9999, 12, 31)
 
-        try:
-            # Intentar parsear fecha ISO 8601 (formato de Freshsale)
-            return date_parser.parse(date_string)
-        except:
+        if isinstance(date_string, datetime):
+            dt = date_string
+        else:
             try:
-                # Intentar formato simple YYYY-MM-DD
-                return datetime.strptime(date_string, '%Y-%m-%d')
+                # Intentar parsear fecha ISO 8601 (formato de Freshsale)
+                dt = date_parser.parse(str(date_string))
             except:
-                logger.warning(f"Could not parse date: {date_string}")
-                return None
+                try:
+                    # Intentar formato simple YYYY-MM-DD
+                    dt = datetime.strptime(date_string, '%Y-%m-%d')
+                except:
+                    logger.warning(f"Could not parse date: {date_string}")
+                    return None
+
+        # Remover timezone para compatibilidad con SQL Server DATETIME
+        if dt.tzinfo is not None:
+            dt = dt.replace(tzinfo=None)
+
+        # Truncar microsegundos para compatibilidad con SQL Server DATETIME
+        dt = dt.replace(microsecond=0)
+
+        if dt < SQL_SERVER_MIN_DATE or dt > SQL_SERVER_MAX_DATE:
+            logger.warning(f"Date out of SQL Server range, setting to None: {date_string}")
+            return None
+
+        return dt
 
     def execute_script_file(self, script_path: str) -> bool:
         """
@@ -144,7 +503,7 @@ class SQLServerLoader:
                 (entity_name, last_execution_date, execution_status, records_extracted,
                  records_inserted, records_updated, records_failed, error_message,
                  execution_duration_seconds)
-                VALUES (?, GETDATE(), ?, ?, ?, ?, ?, ?, ?)
+                VALUES (%s, GETDATE(), %s, %s, %s, %s, %s, %s, %s)
             """
 
             cursor.execute(sql, (
@@ -176,7 +535,7 @@ class SQLServerLoader:
             sql = """
                 SELECT MAX(last_execution_date)
                 FROM freshsale.etl_control
-                WHERE entity_name = ? AND execution_status = 'SUCCESS'
+                WHERE entity_name = %s AND execution_status = 'SUCCESS'
             """
 
             cursor.execute(sql, (entity_name,))
@@ -207,38 +566,38 @@ class SQLServerLoader:
             cursor.execute("""
                 CREATE TABLE #temp_deals (
                     id BIGINT,
-                    name NVARCHAR(MAX),
+                    name NVARCHAR(2000),
                     amount FLOAT,
                     base_currency_amount FLOAT,
                     expected_close DATE,
                     closed_date DATE,
-                    stage_updated_time DATETIME,
+                    stage_updated_time DATETIME2,
                     probability BIGINT,
-                    updated_at DATETIME,
-                    created_at DATETIME,
+                    updated_at DATETIME2,
+                    created_at DATETIME2,
                     deal_pipeline_id BIGINT,
                     deal_stage_id BIGINT,
                     age BIGINT,
-                    recent_note NVARCHAR(MAX),
+                    recent_note NVARCHAR(4000),
                     expected_deal_value FLOAT,
                     is_deleted BIT,
                     forecast_category BIGINT,
                     deal_prediction BIGINT,
-                    deal_prediction_last_updated_at DATETIME,
+                    deal_prediction_last_updated_at DATETIME2,
                     has_products BIT,
                     rotten_days BIGINT,
-                    last_assigned_at DATETIME,
-                    cf_pais NVARCHAR(MAX),
-                    cf_integrador NVARCHAR(MAX),
+                    last_assigned_at DATETIME2,
+                    cf_pais NVARCHAR(200),
+                    cf_integrador NVARCHAR(4000),
                     cf_one_time_setup FLOAT,
                     cf_nro_de_meses BIGINT,
-                    cf_tipo_de_servicio NVARCHAR(MAX),
-                    cf_explique_prdida NVARCHAR(MAX),
+                    cf_tipo_de_servicio NVARCHAR(200),
+                    cf_explique_prdida NVARCHAR(4000),
                     cf_valor_total_de_contrato FLOAT,
-                    last_contacted_sales_activity_mode NVARCHAR(MAX),
-                    last_contacted_via_sales_activity DATETIME,
+                    last_contacted_sales_activity_mode NVARCHAR(100),
+                    last_contacted_via_sales_activity DATETIME2,
                     web_form_id BIGINT,
-                    upcoming_activities_time DATETIME
+                    upcoming_activities_time DATETIME2
                 )
             """)
 
@@ -283,12 +642,17 @@ class SQLServerLoader:
                     self.parse_date(deal.get("upcoming_activities_time"))
                 ))
 
-            # Insert a tabla temporal (individual para evitar problemas de buffer con NVARCHAR(MAX))
-            if insert_data:
-                for row in insert_data:
-                    cursor.execute("""
-                        INSERT INTO #temp_deals VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                    """, row)
+            # Bulk insert: single multi-row INSERT (un solo round-trip)
+            self._bulk_insert(cursor, "#temp_deals", [
+                "id","name","amount","base_currency_amount","expected_close","closed_date",
+                "stage_updated_time","probability","updated_at","created_at","deal_pipeline_id",
+                "deal_stage_id","age","recent_note","expected_deal_value","is_deleted",
+                "forecast_category","deal_prediction","deal_prediction_last_updated_at",
+                "has_products","rotten_days","last_assigned_at","cf_pais","cf_integrador",
+                "cf_one_time_setup","cf_nro_de_meses","cf_tipo_de_servicio","cf_explique_prdida",
+                "cf_valor_total_de_contrato","last_contacted_sales_activity_mode",
+                "last_contacted_via_sales_activity","web_form_id","upcoming_activities_time"
+            ], insert_data)
 
             # MERGE desde tabla temporal a tabla final
             cursor.execute("""
@@ -419,16 +783,15 @@ class SQLServerLoader:
                 quantity FLOAT, unit_price FLOAT, total_price FLOAT, discount FLOAT, description NVARCHAR(MAX))""")
 
             # Insertar en tabla temporal
-            for dp in all_deal_products:
-                try:
-                    cursor.execute("""INSERT INTO #temp_deal_products
-                        (freshsale_id, deal_id, product_id, product_name, quantity, unit_price, total_price, discount, description)
-                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-                        dp["id"], dp["deal_id"], dp["product_id"], dp.get("product_name"),
-                        dp["quantity"], dp["unit_price"], dp["total"], dp["discount"], dp.get("description"))
-                except Exception as e:
-                    logger.error(f"Failed to insert deal_product {dp.get('id')}: {str(e)}")
-                    stats["failed"] += 1
+            insert_data = [
+                (dp["id"], dp["deal_id"], dp["product_id"], dp.get("product_name"),
+                 dp["quantity"], dp["unit_price"], dp["total"], dp["discount"], dp.get("description"))
+                for dp in all_deal_products
+            ]
+            self._bulk_insert(cursor, "#temp_deal_products", [
+                "freshsale_id","deal_id","product_id","product_name",
+                "quantity","unit_price","total_price","discount","description"
+            ], insert_data)
 
             # DELETE de todos los productos de los deals que estamos procesando
             cursor.execute("""
@@ -495,11 +858,9 @@ class SQLServerLoader:
                 ))
 
             # Bulk insert a tabla temporal
-            if insert_data:
-                cursor.fast_executemany = True
-                cursor.executemany("""
-                    INSERT INTO #temp_users VALUES (?, ?, ?, ?, ?, ?)
-                """, insert_data)
+            self._bulk_insert(cursor, "#temp_users", [
+                "id","display_name","email","is_active","work_number","mobile_number"
+            ], insert_data)
 
             # MERGE desde tabla temporal a tabla final
             cursor.execute("""
@@ -572,11 +933,7 @@ class SQLServerLoader:
                 ))
 
             # Bulk insert a tabla temporal
-            if insert_data:
-                cursor.fast_executemany = True
-                cursor.executemany("""
-                    INSERT INTO #temp_teams VALUES (?, ?)
-                """, insert_data)
+            self._bulk_insert(cursor, "#temp_teams", ["id","name"], insert_data)
 
             # MERGE desde tabla temporal a tabla final
             cursor.execute("""
@@ -606,17 +963,13 @@ class SQLServerLoader:
             # Procesar team_users (relaciones)
             for team in teams:
                 # Limpiar relaciones anteriores
-                cursor.execute("DELETE FROM freshsale.team_users WHERE team_id = ?", (team["id"],))
+                cursor.execute("DELETE FROM freshsale.team_users WHERE team_id = %s", (team["id"],))
 
                 # Insertar nuevas relaciones
                 user_ids = team.get("user_ids", [])
                 if user_ids:
                     team_user_data = [(team["id"], user_id) for user_id in user_ids]
-                    cursor.fast_executemany = True
-                    cursor.executemany(
-                        "INSERT INTO freshsale.team_users (team_id, user_id) VALUES (?, ?)",
-                        team_user_data
-                    )
+                    self._bulk_insert(cursor, "freshsale.team_users", ["team_id","user_id"], team_user_data)
 
             self.connection.commit()
             logger.info(f"Teams loaded: {stats['inserted']} inserted, {stats['updated']} updated")
@@ -630,6 +983,27 @@ class SQLServerLoader:
             cursor.close()
 
         return stats
+
+    @staticmethod
+    def _bulk_insert(cursor, table: str, columns: List[str], rows: List[tuple]):
+        """
+        Inserta múltiples filas en una sola query SQL (un único round-trip).
+        Construye: INSERT INTO table (cols) VALUES (r1), (r2), ...
+        Divide en batches de 1000 filas para evitar límites de SQL Server.
+        """
+        if not rows:
+            return
+        batch_size = 1000
+        placeholders = "(" + ", ".join(["%s"] * len(columns)) + ")"
+        col_list = ", ".join(columns)
+        for i in range(0, len(rows), batch_size):
+            batch = rows[i:i + batch_size]
+            values_clause = ", ".join([placeholders] * len(batch))
+            flat_params = [v for row in batch for v in row]
+            cursor.execute(
+                f"INSERT INTO {table} ({col_list}) VALUES {values_clause}",
+                flat_params
+            )
 
     def reset_stats(self):
         """Resetea estadísticas"""

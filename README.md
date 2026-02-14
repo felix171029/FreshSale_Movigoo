@@ -5,57 +5,68 @@ Sistema completo de ETL (Extract, Transform, Load) para extraer datos de Freshsa
 
 ## 📋 Características
 
-- ✅ **Extracción completa** de 11 entidades de Freshsale
-- ✅ **BULK INSERT optimizado** - Carga masiva usando tablas temporales y MERGE
+- ✅ **Extracción completa** de 13+ entidades de Freshsale
+- ✅ **BULK INSERT optimizado** - `executemany()` via pymssql (un solo round-trip)
+- ✅ **Auto-creación de tablas** - `ensure_schema_exists()` crea todas las tablas al conectar
 - ✅ **Carga incremental** basada en fecha de última actualización
 - ✅ **Manejo automático de filtros** para extraer todos los registros (no solo del usuario)
 - ✅ **Manejo de errores** con reintentos automáticos y rollback
 - ✅ **Control de rate limiting** para evitar bloqueos de API
 - ✅ **Logging completo** con auditoría en base de datos
-- ✅ **Scripts SQL idempotentes** - se pueden ejecutar múltiples veces
-- ✅ **Configuración flexible** mediante variables de entorno
+- ✅ **Configuración flexible** mediante variables de entorno (sin credenciales hardcodeadas)
 
 ## 📦 Estructura del Proyecto
 
 ```
-FreshSale - Movigoo/
+FreshSale_Movigoo/
 ├── etl/
 │   ├── __init__.py
 │   ├── freshsale_extractor.py    # Extracción desde Freshsale API
-│   ├── sql_loader.py              # Loaders base (deals, users, teams)
-│   └── sql_loader_extended.py     # Loaders extendidos (otras entidades)
+│   ├── sql_loader.py              # Loader base + ensure_schema_exists()
+│   └── sql_loader_extended.py     # Loaders para entidades adicionales
 ├── sql/
-│   └── 01_create_schema.sql       # Script de creación de tablas
+│   └── 01_create_schema.sql       # Script SQL de referencia (no requerido)
 ├── main.py                        # Script principal del ETL
-├── config.py                      # Configuración central
+├── config.py                      # Configuración central (lee del .env)
 ├── .env                           # Credenciales (NO subir a git)
 ├── .env.example                   # Plantilla de credenciales
 ├── requirements.txt               # Dependencias de Python
 └── README.md                      # Este archivo
 ```
 
-## 🚀 Instalación Rápida
+## 🚀 Instalación
 
 ### Requisitos Previos
 
 - **Python 3.8+**
-- **ODBC Driver 18 for SQL Server**
+- **SQL Server 2022** (compatible con versiones anteriores)
 
 ### Instalación
 
 ```bash
-# 1. Clonar/descargar el proyecto
-cd "/Users/felix/FreshSale - Movigoo"
-
-# 2. Crear entorno virtual (recomendado)
+# 1. Crear entorno virtual
 python3 -m venv venv
 source venv/bin/activate  # En Windows: venv\Scripts\activate
 
-# 3. Instalar dependencias
+# 2. Instalar dependencias
 pip install -r requirements.txt
 
-# 4. Configurar credenciales (ya configurado)
-# Editar .env si es necesario
+# 3. Configurar credenciales
+cp .env.example .env
+# Editar .env con las credenciales correctas
+```
+
+### Variables de Entorno (`.env`)
+
+```env
+FRESHSALE_DOMAIN=tu-empresa.myfreshworks.com
+FRESHSALE_API_KEY=tu-api-key
+
+REP_DB_HOST=ip-del-servidor
+REP_DB_PORT=1433
+REP_DB_NAME=nombre-base-datos
+REP_DB_USER=usuario
+REP_DB_PASSWORD=contraseña
 ```
 
 ## ▶️ Uso del ETL
@@ -63,233 +74,113 @@ pip install -r requirements.txt
 ### Comandos Principales
 
 ```bash
-# Carga completa de todas las entidades (primera vez)
-python main.py --full --skip-schema
+# Carga completa de todas las entidades (primera vez o refresh total)
+python3 main.py --full --skip-schema
 
-# Carga incremental (ejecuciones diarias)
-python main.py --skip-schema
+# Carga incremental (ejecuciones diarias - solo registros modificados)
+python3 main.py --skip-schema
 
 # Cargar solo una entidad específica
-python main.py --entity deals --skip-schema
-python main.py --entity contacts --skip-schema
-python main.py --entity sales_accounts --skip-schema
+python3 main.py --entity deals --full --skip-schema
+python3 main.py --entity contacts --skip-schema
 ```
+
+> **Nota:** `--skip-schema` es irrelevante — las tablas se crean automáticamente al conectar. Se mantiene por compatibilidad.
 
 ### Entidades Disponibles
 
-| Entidad | Comando | Registros | Tiempo Aprox | Estado |
-|---------|---------|-----------|--------------|--------|
-| **Deals** | `--entity deals` | 405 | ~1.7 min | ✅ Activo |
-| **Contacts** | `--entity contacts` | 16,930 | ~12.6 min | ✅ Activo |
-| **Sales Accounts** | `--entity sales_accounts` | 2,210 | ~1 min | ✅ Activo |
-| **Users** | `--entity users` | 11 | <5 seg | ✅ Activo |
-| **Teams** | `--entity teams` | 2 | <5 seg | ✅ Activo |
-| **Pipelines** | `--entity pipelines` | 5 | <5 seg | ✅ Activo |
-| **Stages** | `--entity stages` | 30 | <10 seg | ✅ Activo |
-| **Products** | `--entity products` | 25 | <5 seg | ✅ Activo |
-| **Tasks** | `--entity tasks` | 0 | - | ⚪ Sin datos |
-| **Appointments** | `--entity appointments` | 0 | - | ⚪ Sin datos |
-| **Sales Activities** | `--entity sales_activities` | 0 | - | ⚪ Sin datos |
-| **Leads** | `--entity leads` | - | - | ❌ Deshabilitado* |
+| Entidad | Comando | Estado |
+|---------|---------|--------|
+| Deals + Deal Products | `--entity deals` | ✅ Activo |
+| Contacts | `--entity contacts` | ✅ Activo |
+| Sales Accounts | `--entity sales_accounts` | ✅ Activo |
+| Users | `--entity users` | ✅ Activo |
+| Teams | `--entity teams` | ✅ Activo |
+| Pipelines | `--entity pipelines` | ✅ Activo |
+| Stages | `--entity stages` | ✅ Activo |
+| Products | `--entity products` | ✅ Activo |
+| Tasks | `--entity tasks` | ✅ Activo |
+| Appointments | `--entity appointments` | ✅ Activo |
+| Sales Activities | `--entity sales_activities` | ✅ Activo |
+| Forecast Categories | `--entity forecast_categories` | ✅ Activo |
+| Deal Predictions | `--entity deal_predictions` | ✅ Activo |
+| Leads | `--entity leads` | ❌ Deshabilitado (403)* |
 
-\* **Leads deshabilitado**: La API key actual no tiene permisos de acceso (403 Access Denied). Para habilitarlo, contactar soporte de Freshsale.
-
-### Opciones Disponibles
-
-```bash
---full           # Carga completa (ignorar última ejecución)
---entity NOMBRE  # Procesar solo una entidad específica
---skip-schema    # Saltar creación de tablas (recomendado si ya existen)
-```
-
-## 📊 Resultados de Última Ejecución
-
-**Fecha:** 06 Febrero 2026
-**Duración total:** 15 minutos 55 segundos
-**Registros procesados:** 19,618
-**Registros cargados exitosamente:** 19,593
-**Registros fallidos:** 25 (products - ya corregido)
-
-### Desglose por Entidad
-
-- ✅ Deals: 405 actualizados
-- ✅ Contacts: 16,930 actualizados
-- ✅ Sales Accounts: 2,210 actualizados
-- ✅ Users: 11 actualizados
-- ✅ Teams: 2 actualizados
-- ✅ Pipelines: 5 actualizados
-- ✅ Stages: 30 actualizados
-- ⚪ Tasks: 0 (sin datos en CRM)
-- ⚪ Appointments: 0 (sin datos en CRM)
-- ⚪ Sales Activities: 0 (sin datos en CRM)
-- ✅ Products: 25 (corregido)
-
-## 🔧 Configuración
-
-### Filtros Configurados
-
-El ETL está configurado para extraer **TODOS** los registros (no solo del propietario del API key):
-
-- **Deals**: Filter ID 28001560042 ("All Deals")
-- **Contacts**: Filter ID 28001560030 ("All Contacts")
-- **Sales Accounts**: Filter ID 28001560057 ("All Accounts")
-- **Leads**: Filter ID 28001560017 ("All Leads") - Deshabilitado por permisos
-
-### Carga Incremental
-
-Las entidades con `incremental: True` solo extraen registros modificados desde la última ejecución exitosa:
-
-- Deals, Contacts, Sales Accounts, Products: **Incremental**
-- Users, Teams, Pipelines, Stages: **Carga completa siempre**
+\* **Leads deshabilitado**: La API key actual no tiene permisos. Para habilitar, solicitar acceso en Freshsale.
 
 ## 🏗️ Arquitectura Técnica
 
-### Optimización BULK INSERT
+### Driver de Base de Datos
 
-Todas las funciones de carga utilizan el patrón optimizado:
+Usa **pymssql** (no pyodbc) por compatibilidad con `NVARCHAR(MAX)` en bulk inserts sobre SQL Server 2022 Linux.
 
-1. **Crear tabla temporal** (#temp_entity)
-2. **Insertar datos** individualmente a tabla temporal (evita buffer overflow)
-3. **MERGE** masivo de tabla temporal → tabla final
-4. **Contar** INSERTs y UPDATEs mediante OUTPUT $action
-5. **Cleanup** y commit
+### Patrón BULK INSERT
 
-**Ventaja:** Reduce ~4,420 queries individuales a 3 operaciones para 2,210 registros (~99.9% reducción).
+```
+Freshsales API (paginado 100/página)
+    → Acumula todos los registros en memoria
+    → cursor.executemany() → #temp_entity (un solo round-trip)
+    → MERGE #temp_entity → freshsale.entity
+    → Commit
+```
 
-### Manejo de Errores
+### Auto-creación de Tablas
 
-- **Rollback automático** en caso de error durante MERGE
-- **Reintentos** con backoff exponencial para API calls
-- **Logging detallado** en archivo y consola
-- **Estadísticas** de inserted/updated/failed por entidad
+Al conectar, `SQLServerLoader.ensure_schema_exists()` verifica y crea automáticamente todas las tablas. No se requieren scripts SQL manuales en un servidor nuevo.
 
-## 📅 Programación Automática
+### Tabla `fact_deals_products`
 
-### Linux/Mac (Cron)
+Es una tabla de reporting calculada, **no gestionada por el ETL**. Se actualiza ejecutando el stored procedure en SQL Server:
+```sql
+EXEC dbo.act_fact_deals_products
+```
+
+## 📅 Programación Automática (Cron)
 
 ```bash
 # Ejecutar diario a las 2 AM
 crontab -e
 
 # Agregar:
-0 2 * * * cd /Users/felix/FreshSale\ -\ Movigoo && source venv/bin/activate && python main.py --skip-schema >> etl_cron.log 2>&1
+0 2 * * * cd /ruta/FreshSale_Movigoo && source venv/bin/activate && python3 main.py --skip-schema >> etl_cron.log 2>&1
 ```
 
-### Windows (Task Scheduler)
-
-1. Abrir Task Scheduler
-2. Crear tarea básica
-3. Trigger: Diario a las 02:00
-4. Action: Ejecutar programa
-   - Programa: `C:\Python\python.exe`
-   - Argumentos: `main.py --skip-schema`
-   - Directorio: `C:\ruta\FreshSale - Movigoo`
-
-## 📝 Logs y Monitoreo
-
-### Archivo de Log
+## 📝 Monitoreo
 
 ```bash
 # Ver log en tiempo real
 tail -f etl_freshsale.log
-
-# Windows PowerShell
-Get-Content etl_freshsale.log -Wait
 ```
 
-### Consultas SQL Útiles
-
 ```sql
--- Ver últimas ejecuciones
-SELECT TOP 10 *
-FROM freshsale.etl_control
-ORDER BY last_execution_date DESC;
+-- Últimas ejecuciones
+SELECT TOP 10 * FROM freshsale.etl_control ORDER BY last_execution_date DESC;
 
 -- Ver errores
-SELECT *
-FROM freshsale.etl_control
-WHERE execution_status = 'ERROR';
+SELECT * FROM freshsale.etl_control WHERE execution_status = 'ERROR';
 
--- Contar registros por entidad
-SELECT 'deals' as entity, COUNT(*) as total FROM freshsale.deals UNION ALL
+-- Conteo por tabla
+SELECT 'deals' as entidad, COUNT(*) as total FROM freshsale.deals UNION ALL
 SELECT 'contacts', COUNT(*) FROM freshsale.contacts UNION ALL
 SELECT 'sales_accounts', COUNT(*) FROM freshsale.sales_accounts;
 ```
 
-## 🐛 Solución de Problemas Comunes
+## 🐛 Errores Comunes
 
-### Error: "Communication link failure"
-
-**Causa:** Timeout de conexión (>10 minutos)
-**Solución:** Ya resuelto con BULK INSERT optimizado
-
-### Error: "Access Denied" (403)
-
-**Causa:** API key sin permisos para la entidad
-**Solución:** Deshabilitar entidad o solicitar permisos en Freshsale
-
-### Error: "Invalid column name"
-
-**Causa:** Desajuste entre schema SQL Server y código Python
-**Solución:** Ya corregido para todas las entidades
-
-### Error: "String data, right truncation"
-
-**Causa:** Campo NVARCHAR con límite insuficiente
-**Solución:** Cambiado a NVARCHAR(MAX) en campos de texto largo
-
-## 🔄 Migración/Actualización
-
-### Actualizar a Nuevo Servidor SQL
-
-```bash
-# 1. Editar .env con nuevas credenciales
-nano .env
-
-# 2. Crear schema en nuevo servidor
-python main.py  # Creará tablas automáticamente
-
-# 3. Carga completa inicial
-python main.py --full
-```
-
-### Agregar Nueva Entidad
-
-1. Agregar configuración en `config.py`
-2. Crear método `extract_ENTITY()` en `freshsale_extractor.py`
-3. Crear función `upsert_ENTITY()` en `sql_loader_extended.py`
-4. Agregar mapeo en `main.py` (secciones extract y load)
-
-## 📈 Métricas de Rendimiento
-
-| Métrica | Valor |
-|---------|-------|
-| **Total entidades activas** | 8 |
-| **Registros totales** | 19,618 |
-| **Tiempo carga completa** | ~16 minutos |
-| **Tiempo carga incremental** | <1 minuto (promedio) |
-| **API requests (full load)** | ~206 |
-| **Tasa de éxito** | 99.87% |
+| Error | Causa | Solución |
+|-------|-------|----------|
+| `ModuleNotFoundError: dotenv` | venv sin dependencias | `pip install -r requirements.txt` |
+| `403 Access Denied` | API key sin permisos | Deshabilitar entidad en `config.py` |
+| `zsh: command not found: python` | macOS usa `python3` | Usar `python3` |
 
 ## 🔒 Seguridad
 
-- **Credenciales** en `.env` (no versionado en Git)
-- **Conexión SSL/TLS** a SQL Server (TrustServerCertificate=yes)
-- **API Token** en headers (no en URL)
-- **Rollback automático** en caso de error (integridad de datos)
-
-## 📞 Soporte
-
-1. Revisar `etl_freshsale.log`
-2. Consultar tabla `freshsale.etl_control`
-3. Ejecutar con `LOG_LEVEL=DEBUG` en `.env`
+- Credenciales exclusivamente en `.env` (no versionado en Git)
+- API Token en headers HTTP (no en URL)
+- Rollback automático en caso de error
 
 ---
 
-**Versión:** 2.0.0 (BULK INSERT Optimizado)
-**Última actualización:** 06 Febrero 2026
+**Versión:** 3.0.0
+**Última actualización:** Febrero 2026
 **Desarrollado para:** Movigoo Innovación SPA
-=======
-# FreshSale_Movigoo
-API y ETL de FreshSales a SQL Server 
->>>>>>> a141e47a6f91aac9d2b120ea9f3c379403a5b5a1

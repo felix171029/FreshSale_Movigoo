@@ -31,10 +31,11 @@ python main.py --full
 ### Development Setup
 
 ```bash
-# Install dependencies
+# Recrear venv y instalar dependencias (usar python3, no python)
+python3 -m venv venv && source venv/bin/activate
 pip install -r requirements.txt
 
-# Environment setup - configure .env with:
+# Environment setup - copiar .env.example a .env y configurar:
 # - FRESHSALE_DOMAIN, FRESHSALE_API_KEY
 # - REP_DB_HOST, REP_DB_PORT, REP_DB_NAME, REP_DB_USER, REP_DB_PASSWORD
 ```
@@ -52,15 +53,17 @@ pip install -r requirements.txt
    - Special handling: `extract_deals()` uses `?include=products` to fetch deal_products in same call
 
 2. **Loading Layer** (`etl/sql_loader.py` + `etl/sql_loader_extended.py`)
-   - `SQLServerLoader` base class with core upsert functions
+   - `SQLServerLoader` base class con conexión via **pymssql** (no pyodbc)
    - Extended loaders in `sql_loader_extended.py` for additional entities
+   - **Auto-creación de tablas:** `ensure_schema_exists()` se llama al conectar — crea todas las tablas si no existen, sin necesidad de scripts SQL manuales
    - **BULK INSERT pattern** (critical for performance):
      1. Create temp table (`#temp_entity`)
-     2. Insert all records individually to temp table (avoids buffer overflow)
+     2. `loader._bulk_insert()` — inserta todas las filas en un único `INSERT ... VALUES (r1),(r2),...` (un solo round-trip)
      3. Single MERGE from temp → final table
      4. Count INSERTs/UPDATEs via `OUTPUT $action`
      5. Cleanup and commit
    - **deal_products uses DELETE + INSERT** (not MERGE) to avoid duplicate key conflicts
+   - **Placeholders:** usar `%s` (pymssql), NO `?` (pyodbc)
 
 3. **Orchestration Layer** (`main.py`)
    - Maps entity names to extractor methods
@@ -70,6 +73,8 @@ pip install -r requirements.txt
 
 ### Configuration (`config.py`)
 
+- Credenciales y conexión vienen **exclusivamente del `.env`** — ningún valor hardcodeado en `config.py`
+- `SQL_SERVER_CONNECTION_PARAMS`: dict con parámetros para pymssql (`server`, `port`, `database`, `user`, `password`)
 - `ENTITIES_CONFIG`: Central registry of all entities with:
   - `enabled`: Whether to process
   - `filter_id`: Freshsales view filter (28001560042 = "All Deals")
@@ -105,8 +110,8 @@ pip install -r requirements.txt
 
 1. Add to `ENTITIES_CONFIG` in `config.py`
 2. Create `extract_ENTITY()` method in `freshsale_extractor.py`
-3. Create `upsert_ENTITY()` function in `sql_loader_extended.py` using BULK INSERT pattern
-4. Add table schema to `sql/01_create_schema.sql`
+3. Create `upsert_ENTITY()` function in `sql_loader_extended.py` using BULK INSERT pattern (placeholders `%s`)
+4. Add `CREATE TABLE` DDL en `ensure_schema_exists()` en `sql_loader.py` (NO en script SQL externo)
 5. Map entity in `main.py`:
    - Add extraction branch (line ~123-156)
    - Add loading branch (line ~171-201)
@@ -118,9 +123,8 @@ pip install -r requirements.txt
 # Create temp table
 cursor.execute("CREATE TABLE #temp_entity (...)")
 
-# Insert to temp (individual inserts to avoid buffer issues)
-for record in data:
-    cursor.execute("INSERT INTO #temp_entity (...) VALUES (...)", values)
+# Bulk insert a temp (un solo INSERT multi-row, un solo round-trip)
+loader._bulk_insert(cursor, "#temp_entity", ["col1","col2",...], insert_data)
 
 # MERGE temp → final
 cursor.execute("""
@@ -149,17 +153,43 @@ stats["inserted"] = cursor.rowcount
 
 ## Database Schema
 
-- All tables in `freshsale` schema
-- Standard ETL columns: `etl_created_at`, `etl_updated_at`
+- All tables in `freshsale` schema (SQL Server 2022 on Linux/Ubuntu)
+- Standard ETL columns: `etl_created_at DATETIME NULL DEFAULT GETDATE()`, `etl_updated_at DATETIME NULL DEFAULT GETDATE()`
 - `etl_control` table tracks last successful run per entity
-- Most tables use Freshsales `id` as primary key
-- Exception: `deal_products` has auto-increment `id` + `freshsale_id` column for original ID
+- Most tables use Freshsales `id BIGINT NOT NULL PRIMARY KEY`
+- Exception: `deal_products` has `id BIGINT IDENTITY(1,1)` + `freshsale_id BIGINT NULL`
+- `fact_deals_products` es una tabla de reporting calculada por el SP `dbo.act_fact_deals_products` — **no es gestionada por el ETL**
+
+### Tablas gestionadas por el ETL
+
+| Tabla | PK | Notas |
+|---|---|---|
+| `etl_control` | `id INT IDENTITY` | Control de ejecución |
+| `etl_log` | `id INT IDENTITY` | Logs |
+| `users` | `id BIGINT` | |
+| `teams` | `id BIGINT` | |
+| `team_users` | `id INT IDENTITY` | Sin FK |
+| `pipelines` | `id BIGINT` | |
+| `stages` | `id BIGINT` | |
+| `deals` | `id BIGINT` | `name NVARCHAR(MAX)` |
+| `deal_products` | `id BIGINT IDENTITY` | Sin FK a deals |
+| `contacts` | `id BIGINT` | |
+| `sales_accounts` | `id BIGINT` | |
+| `leads` | `id BIGINT` | Deshabilitado (403) |
+| `tasks` | `id BIGINT` | |
+| `appointments` | `id BIGINT` | |
+| `sales_activities` | `id BIGINT` | Columnas: `notes`, `activity_type` |
+| `products` | `id BIGINT` | |
+| `forecast_categories` | `id BIGINT` | |
+| `deal_predictions` | `id BIGINT` | |
 
 ## Important Notes
 
-- **Always use `--skip-schema`** in production (schema already exists)
+- **`--skip-schema` es irrelevante** — las tablas se crean automáticamente al conectar via `ensure_schema_exists()`
+- **Driver: pymssql** (no pyodbc) — requerido para soporte de `NVARCHAR(MAX)` en bulk inserts
 - **deal_products requires deals** - products are extracted as part of deals process
 - **stages requires pipelines** - stages come from pipelines API response
 - **Leads entity disabled** - API key lacks permissions (403 error)
 - **Cron/scheduled execution:** Use incremental mode without `--full` flag
 - **First-time setup:** Use `--full` to populate all tables initially
+- **`fact_deals_products`** se actualiza ejecutando el SP `EXEC dbo.act_fact_deals_products` en SQL Server — no es parte del ETL Python

@@ -29,7 +29,7 @@ from config import (
     RETRY_DELAY,
     REQUEST_TIMEOUT,
     RATE_LIMIT_DELAY,
-    SQL_SERVER_CONNECTION_STRING,
+    SQL_SERVER_CONNECTION_PARAMS,
     ENTITIES_CONFIG,
     LOG_LEVEL,
     LOG_FILE,
@@ -259,7 +259,7 @@ def main():
 
     # Inicializar loader
     logger.info("Initializing SQL Server loader...")
-    loader = SQLServerLoader(SQL_SERVER_CONNECTION_STRING)
+    loader = SQLServerLoader(SQL_SERVER_CONNECTION_PARAMS)
 
     if not loader.connect():
         logger.error("Failed to connect to SQL Server. Aborting.")

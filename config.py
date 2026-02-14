@@ -31,18 +31,16 @@ SQL_SERVER_DATABASE = os.getenv("REP_DB_NAME")
 SQL_SERVER_USER = os.getenv("REP_DB_USER")
 SQL_SERVER_PASSWORD = os.getenv("REP_DB_PASSWORD")
 
-# Connection string para pyodbc
-SQL_SERVER_DRIVER = "{ODBC Driver 18 for SQL Server}"
-SQL_SERVER_CONNECTION_STRING = (
-    f"DRIVER={SQL_SERVER_DRIVER};"
-    f"SERVER={SQL_SERVER_HOST},{SQL_SERVER_PORT};"
-    f"DATABASE={SQL_SERVER_DATABASE};"
-    f"UID={SQL_SERVER_USER};"
-    f"PWD={SQL_SERVER_PASSWORD};"
-    f"TrustServerCertificate=yes;"
-    f"Encrypt=yes;"
-    f"Connection Timeout=60;"
-)
+# Parámetros de conexión para pymssql
+SQL_SERVER_CONNECTION_PARAMS = {
+    "server": SQL_SERVER_HOST,
+    "port": SQL_SERVER_PORT,
+    "database": SQL_SERVER_DATABASE,
+    "user": SQL_SERVER_USER,
+    "password": SQL_SERVER_PASSWORD,
+    "tds_version": "7.4",
+    "login_timeout": 60,
+}
 
 # ================================================================
 # CONFIGURACIÓN DE LOGGING

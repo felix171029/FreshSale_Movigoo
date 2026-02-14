@@ -6,7 +6,7 @@
 requests>=2.31.0
 
 # SQL Server driver
-pyodbc>=5.0.0
+pymssql>=2.3.0
 
 # Variables de entorno
 python-dotenv>=1.0.0
