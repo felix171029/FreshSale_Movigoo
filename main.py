@@ -89,25 +89,6 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
-def setup_database(loader: SQLServerLoader) -> bool:
-    """
-    Ejecuta el script de creación de esquema
-
-    Args:
-        loader: Instancia de SQLServerLoader
-
-    Returns:
-        True si fue exitoso
-    """
-    logger.info("Setting up database schema...")
-
-    script_path = Path(__file__).parent / "sql" / "01_create_schema.sql"
-
-    if not script_path.exists():
-        logger.error(f"Schema script not found: {script_path}")
-        return False
-
-    return loader.execute_script_file(str(script_path))
 
 
 def process_entity(entity_name: str, config: dict, extractor: FreshsaleExtractor,
@@ -259,7 +240,6 @@ def main():
     parser = argparse.ArgumentParser(description="ETL Freshsale -> SQL Server")
     parser.add_argument("--full", action="store_true", help="Force full load (ignore last execution)")
     parser.add_argument("--entity", type=str, help="Process only specific entity")
-    parser.add_argument("--skip-schema", action="store_true", help="Skip schema setup")
 
     args = parser.parse_args()
 
@@ -301,12 +281,6 @@ def main():
         sys.exit(1)
 
     try:
-        # Setup de base de datos (crear tablas si no existen)
-        if not args.skip_schema:
-            if not setup_database(loader):
-                logger.error("Failed to setup database schema. Aborting.")
-                sys.exit(1)
-
         # Determinar entidades a procesar
         entities_to_process = {}
 
