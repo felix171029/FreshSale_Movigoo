@@ -13,6 +13,7 @@ Uso:
 
 import argparse
 import logging
+import subprocess
 import sys
 import time
 from datetime import datetime
@@ -20,6 +21,40 @@ from pathlib import Path
 
 # Agregar path para imports
 sys.path.append(str(Path(__file__).parent))
+
+
+def self_update():
+    """Hace git pull y verifica que los requirements estén instalados."""
+    script_dir = Path(__file__).parent
+
+    # git pull
+    print("🔄 Checking for updates (git pull)...")
+    result = subprocess.run(
+        ["git", "pull"],
+        cwd=script_dir,
+        capture_output=True,
+        text=True
+    )
+    if result.returncode == 0:
+        print(f"   {result.stdout.strip()}")
+    else:
+        print(f"   ⚠️  git pull failed: {result.stderr.strip()} (continuing anyway)")
+
+    # pip install -r requirements.txt --quiet
+    print("📦 Verifying requirements...")
+    result = subprocess.run(
+        [sys.executable, "-m", "pip", "install", "-r", str(script_dir / "requirements.txt"), "-q", "--exists-action", "i"],
+        cwd=script_dir,
+        capture_output=True,
+        text=True
+    )
+    if result.returncode == 0:
+        print("   Requirements OK")
+    else:
+        print(f"   ⚠️  pip install warning: {result.stderr.strip()} (continuing anyway)")
+
+
+self_update()
 
 from config import (
     FRESHSALE_DOMAIN,
