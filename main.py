@@ -80,6 +80,13 @@ from config import (
 from etl.freshsale_extractor import FreshsaleExtractor
 from etl.sql_loader import SQLServerLoader
 import etl.sql_loader_extended as loader_ext
+from etl.sp_runner import run_stored_procedures
+
+# Lista de Stored Procedures a ejecutar al finalizar el ETL.
+# Agregar nuevos SPs aquí para que se ejecuten automáticamente.
+STORED_PROCEDURES = [
+    "dbo.act_fact_deals_products",
+]
 
 
 # Configurar logging
@@ -340,6 +347,14 @@ def main():
             else:
                 overall_stats["entities_failed"] += 1
 
+        # Ejecutar Stored Procedures post-ETL
+        logger.info("\n" + "="*80)
+        logger.info("EXECUTING STORED PROCEDURES")
+        logger.info("="*80)
+        sp_summary = run_stored_procedures(loader, STORED_PROCEDURES)
+        overall_stats["sp_success"] = sp_summary["success"]
+        overall_stats["sp_failed"] = sp_summary["failed"]
+
         # Resumen final
         total_duration = int(time.time() - total_start_time)
 
@@ -353,6 +368,8 @@ def main():
         logger.info(f"Total records inserted: {overall_stats['total_inserted']}")
         logger.info(f"Total records updated: {overall_stats['total_updated']}")
         logger.info(f"Total records failed: {overall_stats['total_failed']}")
+        logger.info(f"Stored Procedures OK: {overall_stats.get('sp_success', 0)}")
+        logger.info(f"Stored Procedures failed: {overall_stats.get('sp_failed', 0)}")
         logger.info("="*80)
 
         # Estadísticas del extractor

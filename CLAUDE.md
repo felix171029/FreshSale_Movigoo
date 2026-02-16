@@ -70,6 +70,13 @@ pip install -r requirements.txt
    - Maps entity names to loader functions
    - Handles incremental logic via `etl_control` table
    - Logs execution stats to database
+   - After all entities, executes the Stored Procedures defined in `STORED_PROCEDURES`
+
+4. **SP Runner Layer** (`etl/sp_runner.py`)
+   - `run_stored_procedures(loader, sp_list)` — ejecuta una lista de SPs secuencialmente
+   - `execute_sp(loader, sp_name)` — ejecuta un SP individual y registra auditoría en `etl_control`
+   - El nombre del SP se usa como `entity_name` en `etl_control` para trazabilidad
+   - Lista de SPs configurada en `STORED_PROCEDURES` al inicio de `main.py`
 
 ### Configuration (`config.py`)
 
@@ -192,4 +199,5 @@ stats["inserted"] = cursor.rowcount
 - **Leads entity disabled** - API key lacks permissions (403 error)
 - **Cron/scheduled execution:** Use incremental mode without `--full` flag
 - **First-time setup:** Use `--full` to populate all tables initially
-- **`fact_deals_products`** se actualiza ejecutando el SP `EXEC dbo.act_fact_deals_products` en SQL Server — no es parte del ETL Python
+- **`fact_deals_products`** se actualiza automáticamente al final del ETL via `etl/sp_runner.py` ejecutando `dbo.act_fact_deals_products`
+- **Agregar un nuevo SP:** añadirlo a `STORED_PROCEDURES` en `main.py` — se ejecutará automáticamente y quedará auditado en `etl_control`
