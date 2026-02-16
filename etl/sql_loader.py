@@ -503,7 +503,7 @@ class SQLServerLoader:
                 (entity_name, last_execution_date, execution_status, records_extracted,
                  records_inserted, records_updated, records_failed, error_message,
                  execution_duration_seconds)
-                VALUES (%s, GETDATE(), %s, %s, %s, %s, %s, %s, %s)
+                VALUES (%s, CAST(GETDATE() AT TIME ZONE 'UTC' AT TIME ZONE 'Pacific SA Standard Time' AS DATETIME), %s, %s, %s, %s, %s, %s, %s)
             """
 
             cursor.execute(sql, (
