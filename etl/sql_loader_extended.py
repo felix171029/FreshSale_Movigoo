@@ -749,6 +749,7 @@ def upsert_products(loader, products: List[Dict]) -> Dict[str, int]:
         cursor.execute("""CREATE TABLE #temp_products (
             id BIGINT,
             name NVARCHAR(500),
+            category NVARCHAR(255),
             description NVARCHAR(MAX),
             price FLOAT,
             currency NVARCHAR(10),
@@ -767,18 +768,19 @@ def upsert_products(loader, products: List[Dict]) -> Dict[str, int]:
             insert_data.append((
                 product["id"],
                 product.get("name"),
+                product.get("category"),
                 product.get("description"),
-                product.get("pricing", {}).get("base_price"),  # price en SQL Server
-                product.get("pricing", {}).get("currency_code"),  # currency en SQL Server
-                product.get("product_code"),  # sku_number en SQL Server
+                product.get("base_currency_amount"),  # price en SQL Server
+                None,  # currency - la API no devuelve este campo en pricing_type=1
+                product.get("sku_number"),  # sku_number en SQL Server
                 created_at,
                 updated_at,
-                product.get("active") == False  # is_deleted (inverso de active)
+                product.get("is_deleted", False)  # is_deleted
             ))
 
         if insert_data:
             loader._bulk_insert(cursor, "#temp_products", [
-                "id","name","description","price","currency","sku_number","created_at","updated_at","is_deleted"
+                "id","name","category","description","price","currency","sku_number","created_at","updated_at","is_deleted"
             ], insert_data)
 
         # MERGE de tabla temporal a tabla final
@@ -786,6 +788,7 @@ def upsert_products(loader, products: List[Dict]) -> Dict[str, int]:
             USING #temp_products AS source ON target.id = source.id
             WHEN MATCHED THEN UPDATE SET
                 name = source.name,
+                category = source.category,
                 description = source.description,
                 price = source.price,
                 currency = source.currency,
@@ -794,8 +797,8 @@ def upsert_products(loader, products: List[Dict]) -> Dict[str, int]:
                 updated_at = source.updated_at,
                 is_deleted = source.is_deleted,
                 etl_updated_at = GETDATE()
-            WHEN NOT MATCHED THEN INSERT (id, name, description, price, currency, sku_number, created_at, updated_at, is_deleted)
-                VALUES (source.id, source.name, source.description, source.price, source.currency,
+            WHEN NOT MATCHED THEN INSERT (id, name, category, description, price, currency, sku_number, created_at, updated_at, is_deleted)
+                VALUES (source.id, source.name, source.category, source.description, source.price, source.currency,
                         source.sku_number, source.created_at, source.updated_at, source.is_deleted)
             OUTPUT $action;""")
 

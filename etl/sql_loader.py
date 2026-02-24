@@ -336,6 +336,7 @@ class SQLServerLoader:
                 CREATE TABLE freshsale.products (
                     id BIGINT NOT NULL PRIMARY KEY,
                     name NVARCHAR(500) NOT NULL,
+                    category NVARCHAR(255) NULL,
                     description NVARCHAR(MAX) NULL,
                     price FLOAT NULL,
                     currency NVARCHAR(10) NULL,
