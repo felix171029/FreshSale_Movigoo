@@ -139,7 +139,7 @@ class FreshsaleExtractor:
             params = {
                 "page": page,
                 "per_page": self.page_size,
-                "include": "products"  # Incluir productos del deal
+                "include": "products,owner,sales_account"  # Incluir productos, owner y sales_account del deal
             }
 
             # Agregar filtro de fecha si es carga incremental
