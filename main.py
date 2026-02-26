@@ -86,6 +86,7 @@ from etl.sp_runner import run_stored_procedures
 # Agregar nuevos SPs aquí para que se ejecuten automáticamente.
 STORED_PROCEDURES = [
     "[freshsale].[act_snapshot_deals]",
+    "[freshsale].[act_snapshot_deals_hoy]",
    # "dbo.otro_procedimiento",    <-- agregar aquí
 ]
 
