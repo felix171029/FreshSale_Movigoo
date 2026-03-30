@@ -152,7 +152,9 @@ def process_entity(entity_name: str, config: dict, extractor: FreshsaleExtractor
         filter_id = config.get("filter_id")
 
         if entity_name == "deals":
-            data = extractor.extract_deals(filter_id, last_updated)
+            # Filtros adicionales por pipeline (Leads, New Business, Renewals, Expansion)
+            extra_filter_ids = [28006328833, 28006328834, 28006328835, 28006328836]
+            data = extractor.extract_deals(filter_id, last_updated, extra_filter_ids)
         elif entity_name == "contacts":
             data = extractor.extract_contacts(filter_id, last_updated)
         elif entity_name == "leads":

@@ -117,61 +117,64 @@ class FreshsaleExtractor:
         logger.error(f"All retry attempts failed for: {url}")
         return None
 
-    def extract_deals(self, filter_id: int, last_updated: Optional[datetime] = None) -> List[Dict]:
+    def extract_deals(self, filter_id: int, last_updated: Optional[datetime] = None,
+                      extra_filter_ids: Optional[List[int]] = None) -> List[Dict]:
         """
-        Extrae deals usando un filtro específico
+        Extrae deals usando uno o más filtros. Deduplica por ID.
 
         Args:
-            filter_id: ID del filtro a usar
+            filter_id: ID del filtro principal
             last_updated: Fecha de última actualización para carga incremental
+            extra_filter_ids: IDs de filtros adicionales (otros pipelines)
 
         Returns:
-            Lista de deals
+            Lista de deals deduplicada
         """
-        logger.info(f"Extracting deals with filter {filter_id}")
+        all_filter_ids = [filter_id] + (extra_filter_ids or [])
+        deals_by_id = {}
 
-        all_deals = []
-        page = 1
-        total_pages = None
+        for fid in all_filter_ids:
+            logger.info(f"Extracting deals with filter {fid}")
+            page = 1
+            total_pages = None
 
-        while True:
-            url = f"{self.base_url}/deals/view/{filter_id}"
-            params = {
-                "page": page,
-                "per_page": self.page_size,
-                "include": "products,owner,sales_account"  # Incluir productos, owner y sales_account del deal
-            }
+            while True:
+                url = f"{self.base_url}/deals/view/{fid}"
+                params = {
+                    "page": page,
+                    "per_page": self.page_size,
+                    "include": "products,owner,sales_account"
+                }
 
-            # Agregar filtro de fecha si es carga incremental
-            if last_updated:
-                params["updated_at"] = f">{last_updated.isoformat()}"
+                if last_updated:
+                    params["updated_at"] = f">{last_updated.isoformat()}"
 
-            data = self._make_request(url, params)
+                data = self._make_request(url, params)
 
-            if not data:
-                logger.error(f"Failed to extract deals page {page}")
-                break
+                if not data:
+                    logger.error(f"Failed to extract deals page {page} (filter {fid})")
+                    break
 
-            deals = data.get("deals", [])
-            meta = data.get("meta", {})
+                deals = data.get("deals", [])
+                meta = data.get("meta", {})
 
-            all_deals.extend(deals)
-            self.stats["total_records"] += len(deals)
+                for deal in deals:
+                    deals_by_id[deal["id"]] = deal
 
-            logger.info(f"Extracted page {page}: {len(deals)} deals")
+                logger.info(f"Filter {fid} page {page}: {len(deals)} deals")
 
-            # Verificar si hay más páginas
-            if total_pages is None:
-                total_pages = meta.get("total_pages", 1)
-                total_records = meta.get("total", 0)
-                logger.info(f"Total pages: {total_pages}, Total records: {total_records}")
+                if total_pages is None:
+                    total_pages = meta.get("total_pages", 1)
+                    total_records = meta.get("total", 0)
+                    logger.info(f"Filter {fid} — Total pages: {total_pages}, Total records: {total_records}")
 
-            if page >= total_pages or len(deals) == 0:
-                break
+                if page >= total_pages or len(deals) == 0:
+                    break
 
-            page += 1
+                page += 1
 
-        logger.info(f"Total deals extracted: {len(all_deals)}")
+        all_deals = list(deals_by_id.values())
+        logger.info(f"Total deals extracted (all pipelines, deduplicated): {len(all_deals)}")
         return all_deals
 
     def extract_contacts(self, filter_id: int, last_updated: Optional[datetime] = None) -> List[Dict]:
