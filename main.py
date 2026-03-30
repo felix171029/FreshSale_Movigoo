@@ -200,7 +200,19 @@ def process_entity(entity_name: str, config: dict, extractor: FreshsaleExtractor
         logger.info(f"Loading {len(data)} records to SQL Server...")
 
         if entity_name == "deals":
-            load_stats = loader.upsert_deals(data)
+            # Construir mapas id->name para pipelines y stages
+            pipeline_map = {}
+            stage_map = {}
+            try:
+                cur = loader.connection.cursor()
+                cur.execute("SELECT id, name FROM freshsale.pipelines")
+                pipeline_map = {row[0]: row[1] for row in cur.fetchall()}
+                cur.execute("SELECT id, name FROM freshsale.stages")
+                stage_map = {row[0]: row[1] for row in cur.fetchall()}
+                cur.close()
+            except Exception as e:
+                logger.warning(f"Could not load pipeline/stage maps: {e}")
+            load_stats = loader.upsert_deals(data, pipeline_map, stage_map)
         elif entity_name == "contacts":
             load_stats = loader_ext.upsert_contacts(loader, data)
         elif entity_name == "leads":

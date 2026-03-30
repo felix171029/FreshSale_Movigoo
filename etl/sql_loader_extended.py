@@ -39,7 +39,15 @@ def upsert_contacts(loader, contacts: List[Dict]) -> Dict[str, int]:
                 sales_account_id BIGINT,
                 created_at DATETIME2,
                 updated_at DATETIME2,
-                is_deleted BIT
+                is_deleted BIT,
+                cf_contacto_principal BIT,
+                cf_rea_interna NVARCHAR(200),
+                cf_nivel_de_cargo NVARCHAR(200),
+                cf_pais NVARCHAR(200),
+                cf_servicio_de_inters NVARCHAR(MAX),
+                cf_lead_creado_por NVARCHAR(200),
+                cf_mensaje NVARCHAR(MAX),
+                cf_rol_del_contacto NVARCHAR(200)
             )
         """)
 
@@ -49,6 +57,9 @@ def upsert_contacts(loader, contacts: List[Dict]) -> Dict[str, int]:
             try:
                 created_at = loader.parse_date(contact.get("created_at"))
                 updated_at = loader.parse_date(contact.get("updated_at"))
+                custom_fields = contact.get("custom_field", {})
+                cp_val = custom_fields.get("cf_contacto_principal")
+                cp_bit = True if str(cp_val).lower() in ("true", "1", "si", "sí", "yes") else (False if cp_val is not None else None)
                 insert_data.append((
                     contact["id"], contact.get("first_name"), contact.get("last_name"),
                     contact.get("display_name"), contact.get("email"),
@@ -57,7 +68,15 @@ def upsert_contacts(loader, contacts: List[Dict]) -> Dict[str, int]:
                     contact.get("city"), contact.get("state"),
                     contact.get("zipcode"), contact.get("country"),
                     contact.get("owner_id"), contact.get("sales_account_id"),
-                    created_at, updated_at, contact.get("is_deleted", False)
+                    created_at, updated_at, contact.get("is_deleted", False),
+                    cp_bit,
+                    custom_fields.get("cf_rea_interna"),
+                    custom_fields.get("cf_nivel_de_cargo"),
+                    custom_fields.get("cf_pais"),
+                    custom_fields.get("cf_servicio_de_inters"),
+                    custom_fields.get("cf_lead_creado_por"),
+                    custom_fields.get("cf_mensaje"),
+                    custom_fields.get("cf_rol_del_contacto")
                 ))
             except Exception as e:
                 logger.error(f"Failed to prepare contact {contact.get('id')}: {str(e)}")
@@ -68,7 +87,9 @@ def upsert_contacts(loader, contacts: List[Dict]) -> Dict[str, int]:
             loader._bulk_insert(cursor, "#temp_contacts", [
                 "id","first_name","last_name","display_name","email","mobile_number",
                 "work_number","job_title","address","city","state","zipcode","country",
-                "owner_id","sales_account_id","created_at","updated_at","is_deleted"
+                "owner_id","sales_account_id","created_at","updated_at","is_deleted",
+                "cf_contacto_principal","cf_rea_interna","cf_nivel_de_cargo","cf_pais",
+                "cf_servicio_de_inters","cf_lead_creado_por","cf_mensaje","cf_rol_del_contacto"
             ], insert_data)
 
         logger.info("Executing MERGE operation...")
@@ -95,17 +116,29 @@ def upsert_contacts(loader, contacts: List[Dict]) -> Dict[str, int]:
                     created_at = source.created_at,
                     updated_at = source.updated_at,
                     is_deleted = source.is_deleted,
+                    cf_contacto_principal = source.cf_contacto_principal,
+                    cf_rea_interna = source.cf_rea_interna,
+                    cf_nivel_de_cargo = source.cf_nivel_de_cargo,
+                    cf_pais = source.cf_pais,
+                    cf_servicio_de_inters = source.cf_servicio_de_inters,
+                    cf_lead_creado_por = source.cf_lead_creado_por,
+                    cf_mensaje = source.cf_mensaje,
+                    cf_rol_del_contacto = source.cf_rol_del_contacto,
                     etl_updated_at = GETDATE()
             WHEN NOT MATCHED THEN
                 INSERT (id, first_name, last_name, display_name, email, mobile_number,
                         work_number, job_title, address, city, state, zipcode, country,
-                        owner_id, sales_account_id, created_at, updated_at, is_deleted)
+                        owner_id, sales_account_id, created_at, updated_at, is_deleted,
+                        cf_contacto_principal, cf_rea_interna, cf_nivel_de_cargo, cf_pais,
+                        cf_servicio_de_inters, cf_lead_creado_por, cf_mensaje, cf_rol_del_contacto)
                 VALUES (source.id, source.first_name, source.last_name, source.display_name,
                         source.email, source.mobile_number, source.work_number,
                         source.job_title, source.address, source.city, source.state,
                         source.zipcode, source.country, source.owner_id,
                         source.sales_account_id, source.created_at, source.updated_at,
-                        source.is_deleted)
+                        source.is_deleted, source.cf_contacto_principal, source.cf_rea_interna,
+                        source.cf_nivel_de_cargo, source.cf_pais, source.cf_servicio_de_inters,
+                        source.cf_lead_creado_por, source.cf_mensaje, source.cf_rol_del_contacto)
             OUTPUT $action;
         """)
 
@@ -166,7 +199,12 @@ def upsert_sales_accounts(loader, accounts: List[Dict]) -> Dict[str, int]:
                 territory_id BIGINT,
                 created_at DATETIME2,
                 updated_at DATETIME2,
-                is_deleted BIT
+                is_deleted BIT,
+                cf_icp_confirmado BIT,
+                cf_segmento NVARCHAR(200),
+                cf_industria NVARCHAR(200),
+                cf_tamano_de_empresa NVARCHAR(200),
+                cf_propietario_de_la_fuente NVARCHAR(200)
             )
         """)
 
@@ -178,6 +216,9 @@ def upsert_sales_accounts(loader, accounts: List[Dict]) -> Dict[str, int]:
                 created_at = loader.parse_date(account.get("created_at"))
                 updated_at = loader.parse_date(account.get("updated_at"))
 
+                custom_fields = account.get("custom_field", {})
+                icp_val = custom_fields.get("cf_icp_confirmado")
+                icp_bit = True if str(icp_val).lower() in ("true", "1", "si", "sí", "yes") else (False if icp_val is not None else None)
                 insert_data.append((
                     account["id"], account.get("name"), account.get("address"),
                     account.get("city"), account.get("state"),
@@ -188,7 +229,12 @@ def upsert_sales_accounts(loader, accounts: List[Dict]) -> Dict[str, int]:
                     account.get("owner_id"), account.get("facebook"),
                     account.get("twitter"), account.get("linkedin"),
                     account.get("territory_id"), created_at, updated_at,
-                    account.get("is_deleted", False)
+                    account.get("is_deleted", False),
+                    icp_bit,
+                    custom_fields.get("cf_segmento"),
+                    custom_fields.get("cf_industria"),
+                    custom_fields.get("cf_tamano_de_empresa"),
+                    custom_fields.get("cf_propietario_de_la_fuente")
                 ))
             except Exception as e:
                 logger.error(f"Failed to prepare sales_account {account.get('id')}: {str(e)}")
@@ -201,7 +247,9 @@ def upsert_sales_accounts(loader, accounts: List[Dict]) -> Dict[str, int]:
                 "id","name","address","city","state","zipcode","country",
                 "industry_type_id","business_type_id","number_of_employees",
                 "annual_revenue","website","phone","owner_id","facebook",
-                "twitter","linkedin","territory_id","created_at","updated_at","is_deleted"
+                "twitter","linkedin","territory_id","created_at","updated_at","is_deleted",
+                "cf_icp_confirmado","cf_segmento","cf_industria","cf_tamano_de_empresa",
+                "cf_propietario_de_la_fuente"
             ], insert_data)
 
         # 4. MERGE desde tabla temporal a tabla final
@@ -232,12 +280,19 @@ def upsert_sales_accounts(loader, accounts: List[Dict]) -> Dict[str, int]:
                     created_at = source.created_at,
                     updated_at = source.updated_at,
                     is_deleted = source.is_deleted,
+                    cf_icp_confirmado = source.cf_icp_confirmado,
+                    cf_segmento = source.cf_segmento,
+                    cf_industria = source.cf_industria,
+                    cf_tamano_de_empresa = source.cf_tamano_de_empresa,
+                    cf_propietario_de_la_fuente = source.cf_propietario_de_la_fuente,
                     etl_updated_at = GETDATE()
             WHEN NOT MATCHED THEN
                 INSERT (id, name, address, city, state, zipcode, country,
                         industry_type_id, business_type_id, number_of_employees,
                         annual_revenue, website, phone, owner_id, facebook,
-                        twitter, linkedin, territory_id, created_at, updated_at, is_deleted)
+                        twitter, linkedin, territory_id, created_at, updated_at, is_deleted,
+                        cf_icp_confirmado, cf_segmento, cf_industria, cf_tamano_de_empresa,
+                        cf_propietario_de_la_fuente)
                 VALUES (source.id, source.name, source.address, source.city,
                         source.state, source.zipcode, source.country,
                         source.industry_type_id, source.business_type_id,
@@ -245,7 +300,9 @@ def upsert_sales_accounts(loader, accounts: List[Dict]) -> Dict[str, int]:
                         source.website, source.phone, source.owner_id,
                         source.facebook, source.twitter, source.linkedin,
                         source.territory_id, source.created_at, source.updated_at,
-                        source.is_deleted)
+                        source.is_deleted, source.cf_icp_confirmado, source.cf_segmento,
+                        source.cf_industria, source.cf_tamano_de_empresa,
+                        source.cf_propietario_de_la_fuente)
             OUTPUT $action;
         """)
 
