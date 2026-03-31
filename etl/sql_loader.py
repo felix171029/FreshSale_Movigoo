@@ -241,8 +241,8 @@ class SQLServerLoader:
                     twitter NVARCHAR(200) NULL,
                     linkedin NVARCHAR(200) NULL,
                     territory_id BIGINT NULL,
-                    created_at DATETIME NULL,
-                    updated_at DATETIME NULL,
+                    created_at DATE NULL,
+                    updated_at DATE NULL,
                     is_deleted BIT NULL DEFAULT 0,
                     etl_created_at DATETIME NULL DEFAULT GETDATE(),
                     etl_updated_at DATETIME NULL DEFAULT GETDATE()

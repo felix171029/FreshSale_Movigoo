@@ -197,8 +197,8 @@ def upsert_sales_accounts(loader, accounts: List[Dict]) -> Dict[str, int]:
                 twitter NVARCHAR(500),
                 linkedin NVARCHAR(500),
                 territory_id BIGINT,
-                created_at DATETIME2,
-                updated_at DATETIME2,
+                created_at DATE,
+                updated_at DATE,
                 is_deleted BIT,
                 cf_icp_confirmado BIT,
                 cf_segmento NVARCHAR(200),
@@ -213,8 +213,10 @@ def upsert_sales_accounts(loader, accounts: List[Dict]) -> Dict[str, int]:
         insert_data = []
         for account in accounts:
             try:
-                created_at = loader.parse_date(account.get("created_at"))
-                updated_at = loader.parse_date(account.get("updated_at"))
+                raw_created = loader.parse_date(account.get("created_at"))
+                raw_updated = loader.parse_date(account.get("updated_at"))
+                created_at = raw_created.date() if raw_created else None
+                updated_at = raw_updated.date() if raw_updated else None
 
                 custom_fields = account.get("custom_field", {})
                 icp_val = custom_fields.get("cf_icp_confirmado")
