@@ -170,6 +170,7 @@ class SQLServerLoader:
                     cf_tipo_de_servicio NVARCHAR(MAX) NULL,
                     cf_explique_prdida NVARCHAR(MAX) NULL,
                     cf_valor_total_de_contrato FLOAT NULL,
+                    cf_nuevo_logo BIT NULL,
                     etl_created_at DATETIME NULL DEFAULT GETDATE(),
                     etl_updated_at DATETIME NULL DEFAULT GETDATE(),
                     last_contacted_sales_activity_mode NVARCHAR(MAX) NULL,
@@ -442,6 +443,7 @@ class SQLServerLoader:
                 "IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id = OBJECT_ID(N'freshsale.deals') AND name = 'cf_fecha_recepcin_po') ALTER TABLE freshsale.deals ADD cf_fecha_recepcin_po DATE NULL",
                 "IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id = OBJECT_ID(N'freshsale.deals') AND name = 'cf_motivo_de_atraso_contractual') ALTER TABLE freshsale.deals ADD cf_motivo_de_atraso_contractual NVARCHAR(MAX) NULL",
                 "IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id = OBJECT_ID(N'freshsale.deals') AND name = 'cf_comentarios_jurdicos__administrativos') ALTER TABLE freshsale.deals ADD cf_comentarios_jurdicos__administrativos NVARCHAR(MAX) NULL",
+                "IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id = OBJECT_ID(N'freshsale.deals') AND name = 'cf_nuevo_logo') ALTER TABLE freshsale.deals ADD cf_nuevo_logo BIT NULL",
             ]
 
             for ddl in ddl_statements:
@@ -730,7 +732,8 @@ class SQLServerLoader:
                     cf_motivo_de_atraso_contractual NVARCHAR(MAX),
                     cf_comentarios_jurdicos__administrativos NVARCHAR(MAX),
                     cf_explique_prdida NVARCHAR(MAX),
-                    cf_integrador NVARCHAR(4000)
+                    cf_integrador NVARCHAR(4000),
+                    cf_nuevo_logo BIT
                 )
             """)
 
@@ -841,6 +844,7 @@ class SQLServerLoader:
                     cf.get("cf_comentarios_jurdicos__administrativos"),
                     cf.get("cf_explique_prdida"),
                     cf.get("cf_integrador"),
+                    to_bit(cf.get("cf_nuevo_logo")),
                 ))
 
             # Bulk insert: single multi-row INSERT (un solo round-trip)
@@ -869,7 +873,8 @@ class SQLServerLoader:
                 "cf_tipo_de_contrato","cf_versin__redlines_requeridos","cf_bloqueador_actual_de_contrato",
                 "cf_fecha_compromiso_de_firma","cf_requiere_po__orden_de_compra","cf_po_recibida",
                 "cf_fecha_recepcin_po","cf_motivo_de_atraso_contractual",
-                "cf_comentarios_jurdicos__administrativos","cf_explique_prdida","cf_integrador"
+                "cf_comentarios_jurdicos__administrativos","cf_explique_prdida","cf_integrador",
+                "cf_nuevo_logo"
             ], insert_data)
 
             # MERGE desde tabla temporal a tabla final
@@ -964,6 +969,7 @@ class SQLServerLoader:
                         cf_comentarios_jurdicos__administrativos = source.cf_comentarios_jurdicos__administrativos,
                         cf_explique_prdida = source.cf_explique_prdida,
                         cf_integrador = source.cf_integrador,
+                        cf_nuevo_logo = source.cf_nuevo_logo,
                         etl_updated_at = GETDATE()
                 WHEN NOT MATCHED THEN
                     INSERT (id, name, amount, base_currency_amount, expected_close,
@@ -993,7 +999,7 @@ class SQLServerLoader:
                             cf_bloqueador_actual_de_contrato, cf_fecha_compromiso_de_firma,
                             cf_requiere_po__orden_de_compra, cf_po_recibida, cf_fecha_recepcin_po,
                             cf_motivo_de_atraso_contractual, cf_comentarios_jurdicos__administrativos,
-                            cf_explique_prdida, cf_integrador)
+                            cf_explique_prdida, cf_integrador, cf_nuevo_logo)
                     VALUES (source.id, source.name, source.amount, source.base_currency_amount,
                             source.expected_close, source.closed_date, source.stage_updated_time,
                             source.probability, source.updated_at, source.created_at,
@@ -1027,7 +1033,7 @@ class SQLServerLoader:
                             source.cf_fecha_compromiso_de_firma, source.cf_requiere_po__orden_de_compra,
                             source.cf_po_recibida, source.cf_fecha_recepcin_po,
                             source.cf_motivo_de_atraso_contractual, source.cf_comentarios_jurdicos__administrativos,
-                            source.cf_explique_prdida, source.cf_integrador)
+                            source.cf_explique_prdida, source.cf_integrador, source.cf_nuevo_logo)
                 OUTPUT $action;
             """)
 
