@@ -47,7 +47,8 @@ def upsert_contacts(loader, contacts: List[Dict]) -> Dict[str, int]:
                 cf_servicio_de_inters NVARCHAR(MAX),
                 cf_lead_creado_por NVARCHAR(200),
                 cf_mensaje NVARCHAR(MAX),
-                cf_rol_del_contacto NVARCHAR(200)
+                cf_rol_del_contacto NVARCHAR(200),
+                tags NVARCHAR(MAX)
             )
         """)
 
@@ -76,7 +77,8 @@ def upsert_contacts(loader, contacts: List[Dict]) -> Dict[str, int]:
                     custom_fields.get("cf_servicio_de_inters"),
                     custom_fields.get("cf_lead_creado_por"),
                     custom_fields.get("cf_mensaje"),
-                    custom_fields.get("cf_rol_del_contacto")
+                    custom_fields.get("cf_rol_del_contacto"),
+                    ",".join(contact.get("tags", []) or [])
                 ))
             except Exception as e:
                 logger.error(f"Failed to prepare contact {contact.get('id')}: {str(e)}")
@@ -89,7 +91,7 @@ def upsert_contacts(loader, contacts: List[Dict]) -> Dict[str, int]:
                 "work_number","job_title","address","city","state","zipcode","country",
                 "owner_id","sales_account_id","created_at","updated_at","is_deleted",
                 "cf_contacto_principal","cf_rea_interna","cf_nivel_de_cargo","cf_pais",
-                "cf_servicio_de_inters","cf_lead_creado_por","cf_mensaje","cf_rol_del_contacto"
+                "cf_servicio_de_inters","cf_lead_creado_por","cf_mensaje","cf_rol_del_contacto","tags"
             ], insert_data)
 
         logger.info("Executing MERGE operation...")
@@ -124,13 +126,14 @@ def upsert_contacts(loader, contacts: List[Dict]) -> Dict[str, int]:
                     cf_lead_creado_por = source.cf_lead_creado_por,
                     cf_mensaje = source.cf_mensaje,
                     cf_rol_del_contacto = source.cf_rol_del_contacto,
+                    tags = source.tags,
                     etl_updated_at = GETDATE()
             WHEN NOT MATCHED THEN
                 INSERT (id, first_name, last_name, display_name, email, mobile_number,
                         work_number, job_title, address, city, state, zipcode, country,
                         owner_id, sales_account_id, created_at, updated_at, is_deleted,
                         cf_contacto_principal, cf_rea_interna, cf_nivel_de_cargo, cf_pais,
-                        cf_servicio_de_inters, cf_lead_creado_por, cf_mensaje, cf_rol_del_contacto)
+                        cf_servicio_de_inters, cf_lead_creado_por, cf_mensaje, cf_rol_del_contacto, tags)
                 VALUES (source.id, source.first_name, source.last_name, source.display_name,
                         source.email, source.mobile_number, source.work_number,
                         source.job_title, source.address, source.city, source.state,
@@ -138,7 +141,7 @@ def upsert_contacts(loader, contacts: List[Dict]) -> Dict[str, int]:
                         source.sales_account_id, source.created_at, source.updated_at,
                         source.is_deleted, source.cf_contacto_principal, source.cf_rea_interna,
                         source.cf_nivel_de_cargo, source.cf_pais, source.cf_servicio_de_inters,
-                        source.cf_lead_creado_por, source.cf_mensaje, source.cf_rol_del_contacto)
+                        source.cf_lead_creado_por, source.cf_mensaje, source.cf_rol_del_contacto, source.tags)
             OUTPUT $action;
         """)
 

@@ -217,6 +217,7 @@ class SQLServerLoader:
                     created_at DATETIME NULL,
                     updated_at DATETIME NULL,
                     is_deleted BIT NULL DEFAULT 0,
+                    tags NVARCHAR(MAX) NULL,
                     etl_created_at DATETIME NULL DEFAULT GETDATE(),
                     etl_updated_at DATETIME NULL DEFAULT GETDATE()
                 )""",
