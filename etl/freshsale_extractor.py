@@ -5,7 +5,7 @@ Módulo de extracción de datos desde Freshsale API
 import requests
 import time
 import logging
-from typing import Dict, List, Any, Optional
+from typing import Dict, List, Any, Optional, Set
 from datetime import datetime
 
 logger = logging.getLogger(__name__)
@@ -599,7 +599,7 @@ class FreshsaleExtractor:
         return choices
 
     def extract_all_ids(self, entity_name: str, filter_id: Optional[int] = None,
-                        extra_filter_ids: Optional[List[int]] = None) -> Optional[set]:
+                        extra_filter_ids: Optional[List[int]] = None) -> Optional[Set[int]]:
         """
         Pagina el endpoint de la entidad sin filtro de fecha y devuelve el set de todos
         los IDs activos. Usado para reconciliación de eliminaciones.
@@ -622,6 +622,10 @@ class FreshsaleExtractor:
 
         path_template, record_key = entity_map[entity_name]
 
+        if "{filter_id}" in path_template and filter_id is None:
+            logger.error(f"extract_all_ids: filter_id is required for entity '{entity_name}'")
+            return None
+
         if "{filter_id}" in path_template:
             all_filter_ids = [filter_id] + (extra_filter_ids or [])
         else:
@@ -639,7 +643,7 @@ class FreshsaleExtractor:
                 params = {"page": page, "per_page": self.page_size}
                 data = self._make_request(url, params)
 
-                if data is None:
+                if not data:  # None or empty dict — treat both as failure
                     logger.warning(f"ID sweep failed for {entity_name} page {page}"
                                    + (f" filter {fid}" if fid else ""))
                     return None  # API failure — caller must skip reconciliation
@@ -659,6 +663,7 @@ class FreshsaleExtractor:
 
                 page += 1
 
+        self.stats["total_records"] += len(active_ids)
         logger.info(f"ID sweep {entity_name}: {len(active_ids)} active IDs in Freshsales")
         return active_ids
 
