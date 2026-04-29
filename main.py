@@ -81,6 +81,7 @@ from etl.freshsale_extractor import FreshsaleExtractor
 from etl.sql_loader import SQLServerLoader
 import etl.sql_loader_extended as loader_ext
 from etl.sp_runner import run_stored_procedures
+from etl.reconciler import reconcile_deletions
 
 # Lista de Stored Procedures a ejecutar al finalizar el ETL.
 # Agregar nuevos SPs aquí para que se ejecuten automáticamente.
@@ -130,6 +131,8 @@ def process_entity(entity_name: str, config: dict, extractor: FreshsaleExtractor
         "extracted": 0,
         "inserted": 0,
         "updated": 0,
+        "deleted": 0,
+        "cascade_deleted": 0,
         "failed": 0,
         "duration": 0,
         "status": "SUCCESS"
@@ -193,61 +196,77 @@ def process_entity(entity_name: str, config: dict, extractor: FreshsaleExtractor
 
         stats["extracted"] = len(data)
 
-        if not data:
-            logger.info(f"No data to load for {entity_name}")
-            stats["duration"] = int(time.time() - start_time)
-            return stats
-
         # CARGA
-        logger.info(f"Loading {len(data)} records to SQL Server...")
+        if data:
+            logger.info(f"Loading {len(data)} records to SQL Server...")
 
-        if entity_name == "deals":
-            # Construir mapas id->name para pipelines y stages
-            pipeline_map = {}
-            stage_map = {}
-            try:
-                cur = loader.connection.cursor()
-                cur.execute("SELECT id, name FROM freshsale.pipelines")
-                pipeline_map = {row[0]: row[1] for row in cur.fetchall()}
-                cur.execute("SELECT id, name FROM freshsale.stages")
-                stage_map = {row[0]: row[1] for row in cur.fetchall()}
-                cur.close()
-            except Exception as e:
-                logger.warning(f"Could not load pipeline/stage maps: {e}")
-            load_stats = loader.upsert_deals(data, pipeline_map, stage_map)
-        elif entity_name == "contacts":
-            load_stats = loader_ext.upsert_contacts(loader, data)
-        elif entity_name == "leads":
-            load_stats = loader_ext.upsert_leads(loader, data)
-        elif entity_name == "sales_accounts":
-            load_stats = loader_ext.upsert_sales_accounts(loader, data)
-        elif entity_name == "tasks":
-            load_stats = loader_ext.upsert_tasks(loader, data)
-        elif entity_name == "appointments":
-            load_stats = loader_ext.upsert_appointments(loader, data)
-        elif entity_name == "sales_activities":
-            load_stats = loader_ext.upsert_sales_activities(loader, data)
-        elif entity_name == "products":
-            load_stats = loader_ext.upsert_products(loader, data)
-        elif entity_name == "pipelines":
-            load_stats = loader_ext.upsert_pipelines(loader, data)
-        elif entity_name == "stages":
-            load_stats = loader_ext.upsert_stages(loader, data)
-        elif entity_name == "forecast_categories":
-            load_stats = loader_ext.upsert_forecast_categories(loader, data)
-        elif entity_name == "deal_predictions":
-            load_stats = loader_ext.upsert_deal_predictions(loader, data)
-        elif entity_name == "users":
-            load_stats = loader.upsert_users(data)
-        elif entity_name == "teams":
-            load_stats = loader.upsert_teams(data)
+            if entity_name == "deals":
+                # Construir mapas id->name para pipelines y stages
+                pipeline_map = {}
+                stage_map = {}
+                try:
+                    cur = loader.connection.cursor()
+                    cur.execute("SELECT id, name FROM freshsale.pipelines")
+                    pipeline_map = {row[0]: row[1] for row in cur.fetchall()}
+                    cur.execute("SELECT id, name FROM freshsale.stages")
+                    stage_map = {row[0]: row[1] for row in cur.fetchall()}
+                    cur.close()
+                except Exception as e:
+                    logger.warning(f"Could not load pipeline/stage maps: {e}")
+                load_stats = loader.upsert_deals(data, pipeline_map, stage_map)
+            elif entity_name == "contacts":
+                load_stats = loader_ext.upsert_contacts(loader, data)
+            elif entity_name == "leads":
+                load_stats = loader_ext.upsert_leads(loader, data)
+            elif entity_name == "sales_accounts":
+                load_stats = loader_ext.upsert_sales_accounts(loader, data)
+            elif entity_name == "tasks":
+                load_stats = loader_ext.upsert_tasks(loader, data)
+            elif entity_name == "appointments":
+                load_stats = loader_ext.upsert_appointments(loader, data)
+            elif entity_name == "sales_activities":
+                load_stats = loader_ext.upsert_sales_activities(loader, data)
+            elif entity_name == "products":
+                load_stats = loader_ext.upsert_products(loader, data)
+            elif entity_name == "pipelines":
+                load_stats = loader_ext.upsert_pipelines(loader, data)
+            elif entity_name == "stages":
+                load_stats = loader_ext.upsert_stages(loader, data)
+            elif entity_name == "forecast_categories":
+                load_stats = loader_ext.upsert_forecast_categories(loader, data)
+            elif entity_name == "deal_predictions":
+                load_stats = loader_ext.upsert_deal_predictions(loader, data)
+            elif entity_name == "users":
+                load_stats = loader.upsert_users(data)
+            elif entity_name == "teams":
+                load_stats = loader.upsert_teams(data)
+            else:
+                logger.warning(f"No loader implemented for: {entity_name}")
+                load_stats = {"inserted": 0, "updated": 0, "failed": 0}
+
+            stats["inserted"] = load_stats.get("inserted", 0)
+            stats["updated"] = load_stats.get("updated", 0)
+            stats["failed"] = load_stats.get("failed", 0)
         else:
-            logger.warning(f"No loader implemented for: {entity_name}")
-            load_stats = {"inserted": 0, "updated": 0, "failed": 0}
+            logger.info(f"No records to upsert for {entity_name}")
 
-        stats["inserted"] = load_stats.get("inserted", 0)
-        stats["updated"] = load_stats.get("updated", 0)
-        stats["failed"] = load_stats.get("failed", 0)
+        # RECONCILIACIÓN — detectar y eliminar registros borrados en Freshsales
+        table_name = config.get("table_name")
+        if table_name:
+            if config.get("incremental"):
+                # Incremental: los datos traídos son parciales, necesitamos barrido completo de IDs
+                extra_ids = [28006328833, 28006328834, 28006328835, 28006328836] \
+                    if entity_name == "deals" else None
+                active_ids = extractor.extract_all_ids(entity_name, filter_id, extra_ids)
+            else:
+                # No-incremental: ya tenemos todos los registros en `data`
+                # Si data está vacío probablemente fue un fallo de API — no reconciliar
+                active_ids = {r["id"] for r in data if r.get("id")} if data else None
+
+            if active_ids is not None:
+                recon_result = reconcile_deletions(loader, entity_name, table_name, active_ids)
+                stats["deleted"] = recon_result["deleted"]
+                stats["cascade_deleted"] = recon_result.get("cascade_deleted", 0)
 
         # Calcular duración
         stats["duration"] = int(time.time() - start_time)
@@ -284,6 +303,7 @@ def main():
         "total_extracted": 0,
         "total_inserted": 0,
         "total_updated": 0,
+        "total_deleted": 0,
         "total_failed": 0,
         "entities_processed": 0,
         "entities_failed": 0
@@ -356,6 +376,7 @@ def main():
             overall_stats["total_extracted"] += stats.get("extracted", 0)
             overall_stats["total_inserted"] += stats.get("inserted", 0)
             overall_stats["total_updated"] += stats.get("updated", 0)
+            overall_stats["total_deleted"] += stats.get("deleted", 0)
             overall_stats["total_failed"] += stats.get("failed", 0)
 
             if stats.get("status") == "SUCCESS":
@@ -383,6 +404,7 @@ def main():
         logger.info(f"Total records extracted: {overall_stats['total_extracted']}")
         logger.info(f"Total records inserted: {overall_stats['total_inserted']}")
         logger.info(f"Total records updated: {overall_stats['total_updated']}")
+        logger.info(f"Total records deleted: {overall_stats['total_deleted']}")
         logger.info(f"Total records failed: {overall_stats['total_failed']}")
         logger.info(f"Stored Procedures OK: {overall_stats.get('sp_success', 0)}")
         logger.info(f"Stored Procedures failed: {overall_stats.get('sp_failed', 0)}")
