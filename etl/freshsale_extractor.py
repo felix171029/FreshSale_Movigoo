@@ -598,6 +598,70 @@ class FreshsaleExtractor:
         self.stats["total_records"] += len(choices)
         return choices
 
+    def extract_all_ids(self, entity_name: str, filter_id: Optional[int] = None,
+                        extra_filter_ids: Optional[List[int]] = None) -> Optional[set]:
+        """
+        Pagina el endpoint de la entidad sin filtro de fecha y devuelve el set de todos
+        los IDs activos. Usado para reconciliación de eliminaciones.
+        Devuelve None si alguna página falla (señal para NO reconciliar).
+        """
+        # Mapa: entity_name -> (path_template, clave en la respuesta JSON)
+        entity_map = {
+            "deals":            ("deals/view/{filter_id}", "deals"),
+            "contacts":         ("contacts/view/{filter_id}", "contacts"),
+            "sales_accounts":   ("sales_accounts/view/{filter_id}", "sales_accounts"),
+            "leads":            ("leads/view/{filter_id}", "leads"),
+            "tasks":            ("tasks", "tasks"),
+            "appointments":     ("appointments", "appointments"),
+            "sales_activities": ("sales_activities", "sales_activities"),
+            "products":         ("cpq/products", "products"),
+        }
+
+        if entity_name not in entity_map:
+            return None
+
+        path_template, record_key = entity_map[entity_name]
+
+        if "{filter_id}" in path_template:
+            all_filter_ids = [filter_id] + (extra_filter_ids or [])
+        else:
+            all_filter_ids = [None]
+
+        active_ids = set()
+
+        for fid in all_filter_ids:
+            path = path_template.replace("{filter_id}", str(fid)) if fid is not None else path_template
+            url = f"{self.base_url}/{path}"
+            page = 1
+            total_pages = None
+
+            while True:
+                params = {"page": page, "per_page": self.page_size}
+                data = self._make_request(url, params)
+
+                if data is None:
+                    logger.warning(f"ID sweep failed for {entity_name} page {page}"
+                                   + (f" filter {fid}" if fid else ""))
+                    return None  # API failure — caller must skip reconciliation
+
+                records = data.get(record_key, [])
+                meta = data.get("meta", {})
+
+                for record in records:
+                    if record.get("id"):
+                        active_ids.add(record["id"])
+
+                if total_pages is None:
+                    total_pages = meta.get("total_pages", 1)
+
+                if page >= total_pages or len(records) == 0:
+                    break
+
+                page += 1
+
+        logger.info(f"ID sweep {entity_name}: {len(active_ids)} active IDs in Freshsales")
+        return active_ids
+
     def extract_deal_products(self, deal_id: int) -> List[Dict]:
         """Extrae productos asociados a un deal"""
         logger.info(f"Extracting products for deal {deal_id}")
