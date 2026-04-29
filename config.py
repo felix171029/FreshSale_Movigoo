@@ -57,6 +57,7 @@ ENTITIES_CONFIG = {
     "deals": {
         "enabled": True,
         "filter_id": 28001560042,  # "All Deals"
+        "extra_filter_ids": [28006328833, 28006328834, 28006328835, 28006328836],
         "table_name": "freshsale.deals",
         "incremental": True,
         "date_field": "updated_at"

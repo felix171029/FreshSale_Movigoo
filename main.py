@@ -156,7 +156,7 @@ def process_entity(entity_name: str, config: dict, extractor: FreshsaleExtractor
 
         if entity_name == "deals":
             # Filtros adicionales por pipeline (Leads, New Business, Renewals, Expansion)
-            extra_filter_ids = [28006328833, 28006328834, 28006328835, 28006328836]
+            extra_filter_ids = config.get("extra_filter_ids")
             data = extractor.extract_deals(filter_id, last_updated, extra_filter_ids)
         elif entity_name == "contacts":
             data = extractor.extract_contacts(filter_id, last_updated)
@@ -251,22 +251,25 @@ def process_entity(entity_name: str, config: dict, extractor: FreshsaleExtractor
             logger.info(f"No records to upsert for {entity_name}")
 
         # RECONCILIACIÓN — detectar y eliminar registros borrados en Freshsales
-        table_name = config.get("table_name")
-        if table_name:
-            if config.get("incremental"):
-                # Incremental: los datos traídos son parciales, necesitamos barrido completo de IDs
-                extra_ids = [28006328833, 28006328834, 28006328835, 28006328836] \
-                    if entity_name == "deals" else None
-                active_ids = extractor.extract_all_ids(entity_name, filter_id, extra_ids)
-            else:
-                # No-incremental: ya tenemos todos los registros en `data`
-                # Si data está vacío probablemente fue un fallo de API — no reconciliar
-                active_ids = {r["id"] for r in data if r.get("id")} if data else None
+        # Saltarse si la extracción tuvo fallos para evitar borrar registros válidos
+        if stats.get("failed", 0) > 0:
+            logger.warning(f"Reconcile SKIPPED for {entity_name}: la extracción tuvo {stats['failed']} fallos")
+        else:
+            table_name = config.get("table_name")
+            if table_name:
+                if config.get("incremental"):
+                    # Incremental: los datos traídos son parciales, necesitamos barrido completo de IDs
+                    extra_ids = config.get("extra_filter_ids") if entity_name == "deals" else None
+                    active_ids = extractor.extract_all_ids(entity_name, filter_id, extra_ids)
+                else:
+                    # No-incremental: ya tenemos todos los registros en `data`
+                    # Si data está vacío probablemente fue un fallo de API — no reconciliar
+                    active_ids = {r["id"] for r in data if r.get("id")} if data else None
 
-            if active_ids is not None:
-                recon_result = reconcile_deletions(loader, entity_name, table_name, active_ids)
-                stats["deleted"] = recon_result["deleted"]
-                stats["cascade_deleted"] = recon_result.get("cascade_deleted", 0)
+                if active_ids is not None:
+                    recon_result = reconcile_deletions(loader, entity_name, table_name, active_ids)
+                    stats["deleted"] = recon_result["deleted"]
+                    stats["cascade_deleted"] = recon_result.get("cascade_deleted", 0)
 
         # Calcular duración
         stats["duration"] = int(time.time() - start_time)
@@ -304,6 +307,7 @@ def main():
         "total_inserted": 0,
         "total_updated": 0,
         "total_deleted": 0,
+        "total_cascade_deleted": 0,
         "total_failed": 0,
         "entities_processed": 0,
         "entities_failed": 0
@@ -377,6 +381,7 @@ def main():
             overall_stats["total_inserted"] += stats.get("inserted", 0)
             overall_stats["total_updated"] += stats.get("updated", 0)
             overall_stats["total_deleted"] += stats.get("deleted", 0)
+            overall_stats["total_cascade_deleted"] += stats.get("cascade_deleted", 0)
             overall_stats["total_failed"] += stats.get("failed", 0)
 
             if stats.get("status") == "SUCCESS":
@@ -405,6 +410,7 @@ def main():
         logger.info(f"Total records inserted: {overall_stats['total_inserted']}")
         logger.info(f"Total records updated: {overall_stats['total_updated']}")
         logger.info(f"Total records deleted: {overall_stats['total_deleted']}")
+        logger.info(f"Total records deleted (cascade): {overall_stats['total_cascade_deleted']}")
         logger.info(f"Total records failed: {overall_stats['total_failed']}")
         logger.info(f"Stored Procedures OK: {overall_stats.get('sp_success', 0)}")
         logger.info(f"Stored Procedures failed: {overall_stats.get('sp_failed', 0)}")
