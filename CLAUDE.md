@@ -15,17 +15,14 @@ ETL system that extracts data from Freshsales CRM API and loads it into SQL Serv
 source venv/bin/activate
 
 # Full load (first time or force refresh)
-python main.py --full --skip-schema
+python main.py --full
 
 # Incremental load (daily production use)
-python main.py --skip-schema
+python main.py
 
 # Single entity
-python main.py --entity deals --skip-schema
-python main.py --entity contacts --full --skip-schema
-
-# With schema creation (only if tables don't exist)
-python main.py --full
+python main.py --entity deals
+python main.py --entity contacts --full
 ```
 
 ### Development Setup
