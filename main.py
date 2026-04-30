@@ -251,8 +251,16 @@ def process_entity(entity_name: str, config: dict, extractor: FreshsaleExtractor
             logger.info(f"No records to upsert for {entity_name}")
 
         # RECONCILIACIÓN — detectar y eliminar registros borrados en Freshsales
-        # Saltarse si la extracción tuvo fallos para evitar borrar registros válidos
-        if stats.get("failed", 0) > 0:
+        # Solo aplica a entidades transaccionales; las tablas de referencia (pipelines,
+        # stages, users, teams, forecast_categories, deal_predictions) se excluyen porque
+        # sus IDs son metadatos internos de Freshsales, no registros que usuarios borren.
+        RECONCILABLE_ENTITIES = {
+            "deals", "contacts", "sales_accounts",
+            "tasks", "appointments", "sales_activities", "products"
+        }
+        if entity_name not in RECONCILABLE_ENTITIES:
+            pass  # entidad de referencia — no reconciliar
+        elif stats.get("failed", 0) > 0:
             logger.warning(f"Reconcile SKIPPED for {entity_name}: la extracción tuvo {stats['failed']} fallos")
         else:
             table_name = config.get("table_name")
