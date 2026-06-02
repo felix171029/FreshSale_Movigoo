@@ -706,7 +706,7 @@ class FreshsaleExtractor:
         logger.info(f"Found {len(all_lists)} lists")
 
         # 2. Por cada lista, obtener sus contactos (paginado)
-        for lst in all_lists:
+        for i, lst in enumerate(all_lists, 1):
             list_id = lst["id"]
             list_name = lst.get("name")
             contact_page = 1
@@ -718,14 +718,17 @@ class FreshsaleExtractor:
                 if not contact_data:
                     break
                 contacts = contact_data.get("contacts", [])
+                meta = contact_data.get("meta", {})
+                total_pages = meta.get("total_pages", 1)
+                if contact_page == 1:
+                    logger.info(f"List {i}/{len(all_lists)} '{list_name}' (id={list_id}): {meta.get('total_count', len(contacts))} contacts, {total_pages} pages")
                 for c in contacts:
                     records.append({
                         "contact_id": c["id"],
                         "list_id": list_id,
                         "list_name": list_name,
                     })
-                meta = contact_data.get("meta", {})
-                if contact_page >= meta.get("total_pages", 1) or not contacts:
+                if contact_page >= total_pages or not contacts:
                     break
                 contact_page += 1
 
