@@ -159,5 +159,12 @@ ENTITIES_CONFIG = {
         "table_name": "freshsale.deal_predictions",
         "incremental": False,  # Carga completa siempre (son pocos registros)
         "date_field": None
+    },
+    "contact_lists": {
+        "enabled": True,
+        "filter_id": None,
+        "table_name": "freshsale.contact_lists",
+        "incremental": False,  # Carga completa siempre (tabla puente sin updated_at)
+        "date_field": None
     }
 }

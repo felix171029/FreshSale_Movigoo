@@ -190,6 +190,8 @@ def process_entity(entity_name: str, config: dict, extractor: FreshsaleExtractor
             data = extractor.extract_users()
         elif entity_name == "teams":
             data = extractor.extract_teams()
+        elif entity_name == "contact_lists":
+            data = extractor.extract_contact_lists()
         else:
             logger.warning(f"Unknown entity type: {entity_name}")
             return stats
@@ -240,6 +242,8 @@ def process_entity(entity_name: str, config: dict, extractor: FreshsaleExtractor
                 load_stats = loader.upsert_users(data)
             elif entity_name == "teams":
                 load_stats = loader.upsert_teams(data)
+            elif entity_name == "contact_lists":
+                load_stats = loader_ext.upsert_contact_lists(loader, data)
             else:
                 logger.warning(f"No loader implemented for: {entity_name}")
                 load_stats = {"inserted": 0, "updated": 0, "failed": 0}
