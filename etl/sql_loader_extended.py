@@ -1122,5 +1122,3 @@ def upsert_contact_lists(loader, records: List[Dict]) -> Dict[str, int]:
         cursor.close()
 
     return stats
-
-    return stats
