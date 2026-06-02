@@ -196,6 +196,16 @@ class SQLServerLoader:
                     freshsale_id BIGINT NULL
                 )""",
 
+                # contact_lists
+                """IF NOT EXISTS (SELECT * FROM sys.objects WHERE object_id = OBJECT_ID(N'freshsale.contact_lists') AND type = 'U')
+CREATE TABLE freshsale.contact_lists (
+    id BIGINT IDENTITY(1,1) NOT NULL PRIMARY KEY,
+    contact_id BIGINT NOT NULL,
+    list_id BIGINT NOT NULL,
+    list_name NVARCHAR(500) NULL,
+    etl_created_at DATETIME NULL DEFAULT GETDATE()
+)""",
+
                 # contacts
                 """IF NOT EXISTS (SELECT * FROM sys.objects WHERE object_id = OBJECT_ID(N'freshsale.contacts') AND type = 'U')
                 CREATE TABLE freshsale.contacts (
