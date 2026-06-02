@@ -684,6 +684,54 @@ class FreshsaleExtractor:
 
         return products
 
+    def extract_contact_lists(self) -> List[Dict]:
+        """Extrae la relación contacto-lista iterando todas las listas y sus contactos."""
+        logger.info("Extracting contact lists...")
+        records = []
+
+        # 1. Obtener todas las listas (paginado)
+        all_lists = []
+        page = 1
+        while True:
+            data = self._make_request(f"{self.base_url}/lists", {"page": page})
+            if not data:
+                break
+            lists_page = data.get("lists", [])
+            all_lists.extend(lists_page)
+            meta = data.get("meta", {})
+            if page >= meta.get("total_pages", 1) or not lists_page:
+                break
+            page += 1
+
+        logger.info(f"Found {len(all_lists)} lists")
+
+        # 2. Por cada lista, obtener sus contactos (paginado)
+        for lst in all_lists:
+            list_id = lst["id"]
+            list_name = lst.get("name")
+            contact_page = 1
+            while True:
+                contact_data = self._make_request(
+                    f"{self.base_url}/contacts/lists/{list_id}",
+                    {"page": contact_page}
+                )
+                if not contact_data:
+                    break
+                contacts = contact_data.get("contacts", [])
+                for c in contacts:
+                    records.append({
+                        "contact_id": c["id"],
+                        "list_id": list_id,
+                        "list_name": list_name,
+                    })
+                meta = contact_data.get("meta", {})
+                if contact_page >= meta.get("total_pages", 1) or not contacts:
+                    break
+                contact_page += 1
+
+        logger.info(f"Total contact-list records extracted: {len(records)}")
+        return records
+
     def get_stats(self) -> Dict[str, int]:
         """Retorna estadísticas de extracción"""
         return self.stats.copy()
