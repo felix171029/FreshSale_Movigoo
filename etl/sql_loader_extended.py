@@ -1069,4 +1069,58 @@ def upsert_deal_products(loader, deal_products: List[Dict]) -> Dict[str, int]:
     finally:
         cursor.close()
 
+
+def upsert_contact_lists(loader, records: List[Dict]) -> Dict[str, int]:
+    """Reemplaza completamente la tabla contact_lists con los datos actuales (TRUNCATE + INSERT)."""
+    stats = {"inserted": 0, "updated": 0, "failed": 0}
+
+    if not records:
+        logger.info("No contact_lists records to load")
+        return stats
+
+    cursor = loader.connection.cursor()
+
+    try:
+        logger.info(f"Creating temp table for {len(records)} contact_lists records...")
+        cursor.execute("""
+            CREATE TABLE #temp_contact_lists (
+                contact_id BIGINT,
+                list_id BIGINT,
+                list_name NVARCHAR(500)
+            )
+        """)
+
+        insert_data = [
+            (r["contact_id"], r["list_id"], r["list_name"])
+            for r in records
+        ]
+
+        loader._bulk_insert(
+            cursor,
+            "#temp_contact_lists",
+            ["contact_id", "list_id", "list_name"],
+            insert_data
+        )
+
+        # Reemplazo completo: truncar y reinsertar desde temp
+        cursor.execute("TRUNCATE TABLE freshsale.contact_lists")
+        cursor.execute("""
+            INSERT INTO freshsale.contact_lists (contact_id, list_id, list_name)
+            SELECT contact_id, list_id, list_name FROM #temp_contact_lists
+        """)
+        stats["inserted"] = cursor.rowcount
+
+        cursor.execute("DROP TABLE #temp_contact_lists")
+        loader.connection.commit()
+        logger.info(f"contact_lists loaded: {stats['inserted']} inserted")
+
+    except Exception as e:
+        logger.error(f"Failed to load contact_lists: {str(e)}")
+        loader.connection.rollback()
+        stats["failed"] = len(records)
+    finally:
+        cursor.close()
+
+    return stats
+
     return stats
