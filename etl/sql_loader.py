@@ -763,9 +763,9 @@ CREATE TABLE freshsale.contact_lists (
                         return None
                     return True if str(val).lower() in ("true", "1", "si", "sí", "yes") else False
 
-                # Primer contacto del deal (contacts es lista)
-                contacts_list = deal.get("contacts", [])
-                contact_id = contacts_list[0].get("id") if contacts_list else None
+                # Primer contacto del deal (contact_ids es lista de IDs)
+                contact_ids = deal.get("contact_ids", [])
+                contact_id = contact_ids[0] if contact_ids else None
 
                 insert_data.append((
                     deal["id"],

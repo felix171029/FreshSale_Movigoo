@@ -143,7 +143,7 @@ class FreshsaleExtractor:
                 params = {
                     "page": page,
                     "per_page": self.page_size,
-                    "include": "products,owner,sales_account"
+                    "include": "products,owner,sales_account,contacts"
                 }
 
                 if last_updated:
