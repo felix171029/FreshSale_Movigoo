@@ -160,6 +160,13 @@ ENTITIES_CONFIG = {
         "incremental": False,  # Carga completa siempre (son pocos registros)
         "date_field": None
     },
+    "lead_sources": {
+        "enabled": True,
+        "filter_id": None,
+        "table_name": "freshsale.lead_sources",
+        "incremental": False,  # Catálogo pequeño, carga completa siempre
+        "date_field": None
+    },
     "contact_lists": {
         "enabled": True,
         "filter_id": None,

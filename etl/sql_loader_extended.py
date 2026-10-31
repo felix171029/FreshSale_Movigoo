@@ -1122,3 +1122,105 @@ def upsert_contact_lists(loader, records: List[Dict]) -> Dict[str, int]:
         cursor.close()
 
     return stats
+
+
+def upsert_lead_sources(loader, sources: List[Dict]) -> Dict[str, int]:
+    """Inserta o actualiza el catálogo de orígenes (lead_sources)"""
+    stats = {"inserted": 0, "updated": 0, "failed": 0}
+
+    if not sources:
+        logger.info("No lead sources to load")
+        return stats
+
+    cursor = loader.connection.cursor()
+
+    try:
+        cursor.execute("""CREATE TABLE #temp_lead_sources (
+            id BIGINT,
+            name NVARCHAR(200),
+            position INT
+        )""")
+
+        insert_data = [(s.get("id"), s.get("value"), s.get("position")) for s in sources]  # API usa "value" como nombre
+        loader._bulk_insert(cursor, "#temp_lead_sources", ["id", "name", "position"], insert_data)
+
+        cursor.execute("""MERGE freshsale.lead_sources AS target
+            USING #temp_lead_sources AS source ON target.id = source.id
+            WHEN MATCHED THEN UPDATE SET
+                name = source.name,
+                position = source.position,
+                etl_updated_at = GETDATE()
+            WHEN NOT MATCHED THEN INSERT
+                (id, name, position, etl_created_at, etl_updated_at)
+            VALUES
+                (source.id, source.name, source.position, GETDATE(), GETDATE())
+            OUTPUT $action;""")
+
+        for result in cursor.fetchall():
+            if result[0] == 'INSERT': stats["inserted"] += 1
+            elif result[0] == 'UPDATE': stats["updated"] += 1
+
+        cursor.execute("DROP TABLE #temp_lead_sources")
+        loader.connection.commit()
+        logger.info(f"Lead sources loaded: {stats['inserted']} inserted, {stats['updated']} updated, {stats['failed']} failed")
+
+    except Exception as e:
+        logger.error(f"Failed to load lead sources: {str(e)}")
+        loader.connection.rollback()
+        stats["failed"] = len(sources)
+    finally:
+        cursor.close()
+
+    return stats
+
+
+def upsert_deal_notes(loader, deal_ids: List[int], notes: List[Dict]) -> Dict[str, int]:
+    """
+    DELETE + INSERT de las notas de los deals procesados: así también se reflejan
+    las notas borradas o editadas en Freshsales.
+    """
+    stats = {"inserted": 0, "updated": 0, "failed": 0}
+
+    if not deal_ids:
+        logger.info("No deal notes to load")
+        return stats
+
+    cursor = loader.connection.cursor()
+
+    try:
+        cursor.execute("CREATE TABLE #temp_note_deal_ids (id BIGINT NOT NULL)")
+        loader._bulk_insert(cursor, "#temp_note_deal_ids", ["id"], [(d,) for d in deal_ids])
+
+        cursor.execute("""DELETE FROM freshsale.deal_notes
+            WHERE deal_id IN (SELECT id FROM #temp_note_deal_ids)""")
+        deleted = cursor.rowcount
+
+        # Una nota puede venir repetida para el mismo deal: se deja una por (id, deal_id)
+        unique = {(n["id"], n["deal_id"]): n for n in notes if n.get("id")}
+        insert_data = [(
+            n["id"],
+            n["deal_id"],
+            n.get("description"),
+            n.get("creater_id"),
+            loader.parse_date(n.get("created_at")),
+            loader.parse_date(n.get("updated_at")),
+        ) for n in unique.values()]
+
+        loader._bulk_insert(cursor, "freshsale.deal_notes", [
+            "id", "deal_id", "description", "creator_id", "created_at", "updated_at"
+        ], insert_data)
+        stats["inserted"] = len(insert_data)
+
+        cursor.execute("DROP TABLE #temp_note_deal_ids")
+        loader.connection.commit()
+        logger.info(f"Deal notes loaded: {deleted} deleted, {stats['inserted']} inserted "
+                    f"({len(deal_ids)} deals)")
+
+    except Exception as e:
+        logger.error(f"Failed to load deal notes: {str(e)}")
+        loader.connection.rollback()
+        stats["failed"] = len(notes)
+    finally:
+        cursor.close()
+
+    return stats

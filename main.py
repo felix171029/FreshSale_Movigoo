@@ -108,6 +108,54 @@ logger = logging.getLogger(__name__)
 
 
 
+def load_deal_notes(extractor: FreshsaleExtractor, loader: SQLServerLoader):
+    """
+    Notas de los deals nuevos o con updated_at distinto (agregar una nota cambia el updated_at del deal).
+    Barrido completo (todos los deals) si nunca se cargaron o si la última carga de notas falló,
+    para no perder las notas de deals que ya no aparecerán como cambiados.
+    """
+    start_time = time.time()
+
+    cursor = loader.connection.cursor()
+    cursor.execute("""SELECT TOP 1 execution_status FROM freshsale.etl_control
+                      WHERE entity_name = 'deal_notes' ORDER BY id DESC""")
+    last = cursor.fetchone()
+    if last is None or last[0] != "SUCCESS":
+        cursor.execute("SELECT id FROM freshsale.deals")
+        deal_ids = [row[0] for row in cursor.fetchall()]
+        logger.info(f"Deal notes: barrido completo de {len(deal_ids)} deals")
+    else:
+        deal_ids = loader.deals_changed_ids
+    cursor.close()
+
+    if not deal_ids:
+        logger.info("Deal notes: sin deals con cambios")
+        return
+
+    notes, failed_ids = extractor.extract_deal_notes(deal_ids)
+    failed = set(failed_ids)
+    ok_ids = [d for d in deal_ids if d not in failed]
+    note_stats = loader_ext.upsert_deal_notes(loader, ok_ids, notes)
+
+    if failed_ids or note_stats.get("failed"):
+        status = "ERROR"
+        error = (f"Notas no leídas de {len(failed_ids)} deals: {failed_ids[:20]}" if failed_ids
+                 else "Falló la carga de deal_notes")
+    else:
+        status, error = "SUCCESS", None
+
+    loader.log_etl_execution(
+        entity_name="deal_notes",
+        status=status,
+        records_extracted=len(notes),
+        records_inserted=note_stats.get("inserted", 0),
+        records_updated=0,
+        records_failed=note_stats.get("failed", 0),
+        error_message=error,
+        duration_seconds=int(time.time() - start_time)
+    )
+
+
 def process_entity(entity_name: str, config: dict, extractor: FreshsaleExtractor,
                    loader: SQLServerLoader, force_full_load: bool = False) -> dict:
     """
@@ -187,6 +235,8 @@ def process_entity(entity_name: str, config: dict, extractor: FreshsaleExtractor
             data = extractor.extract_deal_fields()
         elif entity_name == "deal_predictions":
             data = extractor.extract_deal_prediction_choices()
+        elif entity_name == "lead_sources":
+            data = extractor.extract_lead_sources()
         elif entity_name == "users":
             data = extractor.extract_users()
         elif entity_name == "teams":
@@ -217,6 +267,8 @@ def process_entity(entity_name: str, config: dict, extractor: FreshsaleExtractor
                 except Exception as e:
                     logger.warning(f"Could not load pipeline/stage maps: {e}")
                 load_stats = loader.upsert_deals(data, pipeline_map, stage_map)
+                if load_stats.get("failed", 0) == 0:
+                    load_deal_notes(extractor, loader)
             elif entity_name == "contacts":
                 load_stats = loader_ext.upsert_contacts(loader, data)
             elif entity_name == "leads":
@@ -239,6 +291,8 @@ def process_entity(entity_name: str, config: dict, extractor: FreshsaleExtractor
                 load_stats = loader_ext.upsert_forecast_categories(loader, data)
             elif entity_name == "deal_predictions":
                 load_stats = loader_ext.upsert_deal_predictions(loader, data)
+            elif entity_name == "lead_sources":
+                load_stats = loader_ext.upsert_lead_sources(loader, data)
             elif entity_name == "users":
                 load_stats = loader.upsert_users(data)
             elif entity_name == "teams":

@@ -5,7 +5,7 @@ Módulo de extracción de datos desde Freshsale API
 import requests
 import time
 import logging
-from typing import Dict, List, Any, Optional, Set
+from typing import Dict, List, Any, Optional, Set, Tuple
 from datetime import datetime
 
 logger = logging.getLogger(__name__)
@@ -143,7 +143,8 @@ class FreshsaleExtractor:
                 params = {
                     "page": page,
                     "per_page": self.page_size,
-                    "include": "products,owner,sales_account,contacts"
+                    # source y creater traen lead_source_id y creater_id (sin ellos vienen vacíos)
+                    "include": "products,owner,sales_account,contacts,source,creater"
                 }
 
                 if last_updated:
@@ -597,6 +598,53 @@ class FreshsaleExtractor:
 
         self.stats["total_records"] += len(choices)
         return choices
+
+    def extract_lead_sources(self) -> List[Dict]:
+        """Extrae el catálogo de orígenes (choices del campo lead_source_id de deals)"""
+        logger.info("Extracting deal fields for lead sources")
+
+        url = f"{self.base_url}/settings/deals/fields"
+        data = self._make_request(url)
+
+        if not data:
+            logger.error("Failed to extract deal fields")
+            return []
+
+        for field in data.get("fields", []):
+            if field.get("name") == "lead_source_id":
+                choices = field.get("choices", [])
+                logger.info(f"Total lead sources extracted: {len(choices)}")
+                self.stats["total_records"] += len(choices)
+                return choices
+
+        logger.warning("lead_source_id field not found in deal fields")
+        return []
+
+    def extract_deal_notes(self, deal_ids: List[int]) -> Tuple[List[Dict], List[int]]:
+        """
+        Extrae las notas de cada deal (GET /deals/{id}?include=notes).
+        Cada nota sale con su deal_id. Devuelve (notas, ids de deals que fallaron).
+        """
+        logger.info(f"Extracting notes for {len(deal_ids)} deals")
+        notes = []
+        failed_ids = []
+
+        for i, deal_id in enumerate(deal_ids, 1):
+            data = self._make_request(f"{self.base_url}/deals/{deal_id}", {"include": "notes"})
+            if not data:
+                logger.error(f"Failed to extract notes for deal {deal_id}")
+                failed_ids.append(deal_id)
+                continue
+
+            for note in data.get("notes", []):
+                notes.append({**note, "deal_id": deal_id})
+
+            if i % 100 == 0:
+                logger.info(f"Notes: {i}/{len(deal_ids)} deals processed")
+
+        self.stats["total_records"] += len(notes)
+        logger.info(f"Total deal notes extracted: {len(notes)} ({len(failed_ids)} deals failed)")
+        return notes, failed_ids
 
     def extract_all_ids(self, entity_name: str, filter_id: Optional[int] = None,
                         extra_filter_ids: Optional[List[int]] = None) -> Optional[Set[int]]:

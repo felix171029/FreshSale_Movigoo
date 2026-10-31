@@ -187,6 +187,16 @@ stats["inserted"] = cursor.rowcount
 | `forecast_categories` | `id BIGINT` | |
 | `deal_predictions` | `id BIGINT` | |
 | `deal_history` | `id BIGINT IDENTITY` | Historial de cambios de deals. **Nunca se borra** |
+| `deal_contacts` | `(deal_id, contact_id)` | Todos los contactos de cada deal (`deals.contact_id` es solo el primero) |
+| `deal_notes` | `(id, deal_id)` | Notas de los deals. Los informes leen `deal_id`, `created_at`, `description` |
+| `lead_sources` | `id BIGINT` | Catálogo de orígenes (`deals.lead_source_id`) |
+
+### Origen, creador y notas
+
+- `extract_deals()` usa `include=...,source,creater`: sin eso `lead_source_id` y `creater_id` vienen vacíos. `creater_id` se guarda en `deals.creator_id`.
+- `deal_contacts` se carga en `upsert_deals()` (DELETE + INSERT de los deals que trajeron `contact_ids`).
+- `deal_notes`: `main.load_deal_notes()` corre después de deals y pide `/deals/{id}?include=notes` solo para los deals nuevos o con `updated_at` distinto (`loader.deals_changed_ids`); agregar una nota cambia el `updated_at` del deal. Si nunca se cargaron o la última carga falló (`etl_control`, entity `deal_notes`), barre todos los deals. DELETE + INSERT por deal procesado.
+- `vw_deals_estado`: `es_ganado` / `es_perdido` (de `stages.type`), `fecha_ganado` (primera entrada a Closed Won según el historial), dueño, creador y origen con nombre. "Lead convertido" = deal ganado.
 
 ### Historial de deals (`deal_history`)
 

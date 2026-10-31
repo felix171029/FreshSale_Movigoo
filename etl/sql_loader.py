@@ -24,6 +24,7 @@ class SQLServerLoader:
         """
         self.connection_params = connection_params
         self.connection = None
+        self.deals_changed_ids = []
         self.stats = {
             "inserted": 0,
             "updated": 0,
@@ -521,6 +522,66 @@ CREATE TABLE freshsale.contact_lists (
                 LEFT JOIN freshsale.stages so ON so.id = e.etapa_origen_id
                 LEFT JOIN freshsale.stages sd ON sd.id = e.etapa_destino_id
                 LEFT JOIN freshsale.pipelines p ON p.id = sd.pipeline_id""",
+
+                # creador del deal (creater_id en la API)
+                "IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id = OBJECT_ID(N'freshsale.deals') AND name = 'creator_id') ALTER TABLE freshsale.deals ADD creator_id BIGINT NULL",
+
+                # deal_contacts: todos los contactos de cada deal (deals.contact_id guarda solo el primero)
+                """IF NOT EXISTS (SELECT * FROM sys.objects WHERE object_id = OBJECT_ID(N'freshsale.deal_contacts') AND type = 'U')
+                CREATE TABLE freshsale.deal_contacts (
+                    deal_id BIGINT NOT NULL,
+                    contact_id BIGINT NOT NULL,
+                    etl_created_at DATETIME NULL DEFAULT GETDATE(),
+                    CONSTRAINT PK_deal_contacts PRIMARY KEY (deal_id, contact_id)
+                )""",
+
+                # deal_notes: notas de cada deal (los informes leen deal_id, created_at, description)
+                """IF NOT EXISTS (SELECT * FROM sys.objects WHERE object_id = OBJECT_ID(N'freshsale.deal_notes') AND type = 'U')
+                CREATE TABLE freshsale.deal_notes (
+                    id BIGINT NOT NULL,
+                    deal_id BIGINT NOT NULL,
+                    description NVARCHAR(MAX) NULL,
+                    creator_id BIGINT NULL,
+                    created_at DATETIME NULL,
+                    updated_at DATETIME NULL,
+                    etl_created_at DATETIME NULL DEFAULT GETDATE(),
+                    etl_updated_at DATETIME NULL DEFAULT GETDATE(),
+                    CONSTRAINT PK_deal_notes PRIMARY KEY (id, deal_id)
+                )""",
+
+                # lead_sources: catálogo de orígenes (choices del campo lead_source_id)
+                """IF NOT EXISTS (SELECT * FROM sys.objects WHERE object_id = OBJECT_ID(N'freshsale.lead_sources') AND type = 'U')
+                CREATE TABLE freshsale.lead_sources (
+                    id BIGINT NOT NULL PRIMARY KEY,
+                    name NVARCHAR(200) NOT NULL,
+                    position INT NULL,
+                    etl_created_at DATETIME NULL DEFAULT GETDATE(),
+                    etl_updated_at DATETIME NULL DEFAULT GETDATE()
+                )""",
+
+                # vw_deals_estado: deal ganado/perdido ("lead convertido" = etapa Closed Won) y desde cuándo
+                """CREATE OR ALTER VIEW freshsale.vw_deals_estado AS
+                SELECT d.id AS deal_id, d.name AS deal_name, d.created_at,
+                       d.deal_pipeline_id, p.name AS pipeline, d.deal_stage_id, s.name AS etapa, s.type AS tipo_etapa,
+                       CAST(CASE WHEN s.type = 'Closed Won' THEN 1 ELSE 0 END AS BIT) AS es_ganado,
+                       CAST(CASE WHEN s.type = 'Closed Lost' THEN 1 ELSE 0 END AS BIT) AS es_perdido,
+                       g.fecha_ganado,
+                       d.owner_id, u.display_name AS owner_name,
+                       d.creator_id, c.display_name AS creator_name,
+                       d.lead_source_id, ls.name AS lead_source
+                FROM freshsale.deals d
+                LEFT JOIN freshsale.stages s ON s.id = d.deal_stage_id
+                LEFT JOIN freshsale.pipelines p ON p.id = d.deal_pipeline_id
+                LEFT JOIN freshsale.users u ON u.id = d.owner_id
+                LEFT JOIN freshsale.users c ON c.id = d.creator_id
+                LEFT JOIN freshsale.lead_sources ls ON ls.id = d.lead_source_id
+                OUTER APPLY (
+                    -- primera entrada a una etapa ganada; para deals ya ganados al activar el historial,
+                    -- la fila 'inicial' trae stage_updated_time (cuándo entró a esa etapa)
+                    SELECT MIN(sh.fecha_entrada) AS fecha_ganado
+                    FROM freshsale.vw_deal_stage_history sh
+                    WHERE sh.deal_id = d.id AND sh.es_ganado = 1
+                ) g""",
             ]
 
             for ddl in ddl_statements:
@@ -707,6 +768,7 @@ CREATE TABLE freshsale.contact_lists (
     def upsert_deals(self, deals: List[Dict], pipeline_map: Dict = None, stage_map: Dict = None) -> Dict[str, int]:
         """Inserta o actualiza deals usando BULK INSERT con tabla temporal"""
         stats = {"inserted": 0, "updated": 0, "failed": 0}
+        self.deals_changed_ids = []  # deals nuevos o con updated_at distinto (para extraer sus notas)
 
         if not deals:
             logger.info("No deals to load")
@@ -810,7 +872,8 @@ CREATE TABLE freshsale.contact_lists (
                     cf_comentarios_jurdicos__administrativos NVARCHAR(MAX),
                     cf_explique_prdida NVARCHAR(MAX),
                     cf_integrador NVARCHAR(4000),
-                    cf_nuevo_logo BIT
+                    cf_nuevo_logo BIT,
+                    creator_id BIGINT
                 )
             """)
 
@@ -922,6 +985,7 @@ CREATE TABLE freshsale.contact_lists (
                     cf.get("cf_explique_prdida"),
                     cf.get("cf_integrador"),
                     to_bit(cf.get("cf_nuevo_logo")),
+                    deal.get("creater_id"),
                 ))
 
             # Bulk insert: single multi-row INSERT (un solo round-trip)
@@ -951,8 +1015,16 @@ CREATE TABLE freshsale.contact_lists (
                 "cf_fecha_compromiso_de_firma","cf_requiere_po__orden_de_compra","cf_po_recibida",
                 "cf_fecha_recepcin_po","cf_motivo_de_atraso_contractual",
                 "cf_comentarios_jurdicos__administrativos","cf_explique_prdida","cf_integrador",
-                "cf_nuevo_logo"
+                "cf_nuevo_logo","creator_id"
             ], insert_data)
+
+            # Deals nuevos o con updated_at distinto: son los que pueden tener notas nuevas
+            cursor.execute("""
+                SELECT s.id FROM #temp_deals s
+                LEFT JOIN freshsale.deals t ON t.id = s.id
+                WHERE t.id IS NULL OR EXISTS (SELECT s.updated_at EXCEPT SELECT CAST(t.updated_at AS DATETIME2))
+            """)
+            changed_ids = [row[0] for row in cursor.fetchall()]
 
             # Historial: comparar #temp_deals con freshsale.deals antes de sobrescribir (misma transacción)
             history_stats = self._record_deal_history(cursor)
@@ -1052,6 +1124,7 @@ CREATE TABLE freshsale.contact_lists (
                         cf_explique_prdida = source.cf_explique_prdida,
                         cf_integrador = source.cf_integrador,
                         cf_nuevo_logo = source.cf_nuevo_logo,
+                        creator_id = source.creator_id,
                         etl_updated_at = GETDATE()
                 WHEN NOT MATCHED THEN
                     INSERT (id, name, amount, base_currency_amount, expected_close,
@@ -1081,7 +1154,7 @@ CREATE TABLE freshsale.contact_lists (
                             cf_bloqueador_actual_de_contrato, cf_fecha_compromiso_de_firma,
                             cf_requiere_po__orden_de_compra, cf_po_recibida, cf_fecha_recepcin_po,
                             cf_motivo_de_atraso_contractual, cf_comentarios_jurdicos__administrativos,
-                            cf_explique_prdida, cf_integrador, cf_nuevo_logo)
+                            cf_explique_prdida, cf_integrador, cf_nuevo_logo, creator_id)
                     VALUES (source.id, source.name, source.amount, source.base_currency_amount,
                             source.expected_close, source.closed_date, source.stage_updated_time,
                             source.probability, source.updated_at, source.created_at,
@@ -1115,7 +1188,8 @@ CREATE TABLE freshsale.contact_lists (
                             source.cf_fecha_compromiso_de_firma, source.cf_requiere_po__orden_de_compra,
                             source.cf_po_recibida, source.cf_fecha_recepcin_po,
                             source.cf_motivo_de_atraso_contractual, source.cf_comentarios_jurdicos__administrativos,
-                            source.cf_explique_prdida, source.cf_integrador, source.cf_nuevo_logo)
+                            source.cf_explique_prdida, source.cf_integrador, source.cf_nuevo_logo,
+                            source.creator_id)
                 OUTPUT $action;
             """)
 
@@ -1127,11 +1201,16 @@ CREATE TABLE freshsale.contact_lists (
                 elif result[0] == 'UPDATE':
                     stats["updated"] += 1
 
+            # Todos los contactos de cada deal (misma transacción)
+            contacts_loaded = self._load_deal_contacts(deals, cursor)
+
             # Limpiar tabla temporal
             cursor.execute("DROP TABLE #temp_deals")
 
             self.connection.commit()
+            self.deals_changed_ids = changed_ids
             logger.info(f"Deals loaded: {stats['inserted']} inserted, {stats['updated']} updated, {stats['failed']} failed")
+            logger.info(f"Deal contacts loaded: {contacts_loaded}; deals con updated_at nuevo: {len(changed_ids)}")
 
             # Extraer y cargar deal_products
             deal_products_stats = self._extract_and_load_deal_products(deals, cursor)
@@ -1214,6 +1293,24 @@ CREATE TABLE freshsale.contact_lists (
         stats["cambio"] = cursor.rowcount
 
         return stats
+
+    def _load_deal_contacts(self, deals: List[Dict], cursor) -> int:
+        """
+        DELETE + INSERT en deal_contacts para los deals que trajeron contact_ids.
+        Si la API no trajo la clave contact_ids para un deal, no se toca nada de ese deal.
+        """
+        with_key = [d for d in deals if "contact_ids" in d]
+        if not with_key:
+            return 0
+
+        rows = list({(d["id"], cid) for d in with_key for cid in (d.get("contact_ids") or [])})
+
+        cursor.execute("CREATE TABLE #deal_ids_contacts (id BIGINT NOT NULL)")
+        self._bulk_insert(cursor, "#deal_ids_contacts", ["id"], [(d["id"],) for d in with_key])
+        cursor.execute("DELETE FROM freshsale.deal_contacts WHERE deal_id IN (SELECT id FROM #deal_ids_contacts)")
+        cursor.execute("DROP TABLE #deal_ids_contacts")
+        self._bulk_insert(cursor, "freshsale.deal_contacts", ["deal_id", "contact_id"], rows)
+        return len(rows)
 
     def _extract_and_load_deal_products(self, deals: List[Dict], cursor) -> Dict[str, int]:
         """Extrae productos de los deals y los carga en deal_products"""
