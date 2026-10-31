@@ -88,6 +88,7 @@ from etl.reconciler import reconcile_deletions
 STORED_PROCEDURES = [
     "[freshsale].[act_snapshot_deals]",
     "[freshsale].[act_snapshot_deals_hoy]",
+    "[freshsale].[act_snapshot_deals_history]",  # reescribe la foto del día: queda la de la última corrida
    # "dbo.otro_procedimiento",    <-- agregar aquí
 ]
 

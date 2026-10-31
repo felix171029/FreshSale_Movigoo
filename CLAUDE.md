@@ -186,6 +186,17 @@ stats["inserted"] = cursor.rowcount
 | `products` | `id BIGINT` | |
 | `forecast_categories` | `id BIGINT` | |
 | `deal_predictions` | `id BIGINT` | |
+| `deal_history` | `id BIGINT IDENTITY` | Historial de cambios de deals. **Nunca se borra** |
+
+### Historial de deals (`deal_history`)
+
+- `upsert_deals()` llama a `_record_deal_history()` **antes del MERGE** y en la misma transacción: compara `#temp_deals` con `freshsale.deals` y guarda una fila por campo que cambió.
+- Campos vigilados en `SQLServerLoader._HISTORY_FIELDS`: etapa, pipeline, monto, `expected_close`, `closed_date`, dueño, probabilidad, Commit (`forecast_category`), `cf_valor_total_de_contrato`, `cf_tipo_de_servicio`, `is_deleted`. Para vigilar otro campo, agregarlo a esa lista.
+- Los valores se normalizan a texto antes de comparar (montos `DECIMAL(18,2)`, fechas `AAAA-MM-DD`) para no registrar cambios falsos.
+- `tipo`: `inicial` (estado al activar el historial, 30-oct-2026), `nuevo` (deal que no existía), `cambio`. Al contar cambios, excluir `inicial`.
+- `fecha_cambio_fs`: hora del cambio según Freshsales (`stage_updated_time` para la etapa, `updated_at` para el resto). `detectado_en`: hora en que lo vio el ETL.
+- Vistas: `vw_deal_history` (con nombres en vez de IDs) y `vw_deal_stage_history` (etapa origen/destino, días en la etapa, `es_ganado`).
+- **Ojo con `_bulk_insert`:** usa un `INSERT ... VALUES` multi-fila; si en una columna se mezclan textos y números, SQL Server convierte todo al tipo numérico del literal y puede redondear. La API entrega los montos como texto: no convertirlos a `float` en Python.
 
 ## Important Notes
 
@@ -195,6 +206,8 @@ stats["inserted"] = cursor.rowcount
 - **stages requires pipelines** - stages come from pipelines API response
 - **Leads entity disabled** - API key lacks permissions (403 error)
 - **Cron/scheduled execution:** Use incremental mode without `--full` flag
+- **Horario en producción:** el cron llama a `run_etl.sh` cada hora y el script decide si corre según la hora de **Colombia** (16, 20, 0, 4, 8, 12 h). `contact_lists` (~36 min) solo corre a las 20 h; el resto con `--exclude contact_lists`. Con argumentos, `run_etl.sh` corre de inmediato (uso manual). El servidor está en hora de Chile, que cambia con el horario de verano: por eso el horario se decide en el script y no en el crontab.
+- **`--exclude`:** `python main.py --exclude contact_lists,contacts` omite entidades en esa corrida.
 - **First-time setup:** Use `--full` to populate all tables initially
 - **`fact_deals_products`** se actualiza automáticamente al final del ETL via `etl/sp_runner.py` ejecutando `dbo.act_fact_deals_products`
 - **Agregar un nuevo SP:** añadirlo a `STORED_PROCEDURES` en `main.py` — se ejecutará automáticamente y quedará auditado en `etl_control`

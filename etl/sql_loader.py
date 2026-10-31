@@ -455,6 +455,72 @@ CREATE TABLE freshsale.contact_lists (
                 "IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id = OBJECT_ID(N'freshsale.deals') AND name = 'cf_motivo_de_atraso_contractual') ALTER TABLE freshsale.deals ADD cf_motivo_de_atraso_contractual NVARCHAR(MAX) NULL",
                 "IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id = OBJECT_ID(N'freshsale.deals') AND name = 'cf_comentarios_jurdicos__administrativos') ALTER TABLE freshsale.deals ADD cf_comentarios_jurdicos__administrativos NVARCHAR(MAX) NULL",
                 "IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id = OBJECT_ID(N'freshsale.deals') AND name = 'cf_nuevo_logo') ALTER TABLE freshsale.deals ADD cf_nuevo_logo BIT NULL",
+
+                # deal_history: un registro por campo vigilado que cambia. Nunca se borra (ni el reconciler la toca).
+                # tipo: 'inicial' (estado al activar el historial), 'nuevo' (deal que no existía), 'cambio'.
+                # fecha_cambio_fs: hora del cambio según Freshsales (stage_updated_time para la etapa, updated_at para el resto).
+                """IF NOT EXISTS (SELECT * FROM sys.objects WHERE object_id = OBJECT_ID(N'freshsale.deal_history') AND type = 'U')
+                CREATE TABLE freshsale.deal_history (
+                    id BIGINT IDENTITY(1,1) NOT NULL PRIMARY KEY,
+                    deal_id BIGINT NOT NULL,
+                    campo VARCHAR(50) NOT NULL,
+                    valor_anterior NVARCHAR(500) NULL,
+                    valor_nuevo NVARCHAR(500) NULL,
+                    tipo VARCHAR(10) NOT NULL,
+                    fecha_cambio_fs DATETIME2 NULL,
+                    updated_at_fs DATETIME2 NULL,
+                    detectado_en DATETIME2 NOT NULL DEFAULT SYSDATETIME()
+                )""",
+                "IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_deal_history_deal_campo' AND object_id = OBJECT_ID(N'freshsale.deal_history')) CREATE INDEX IX_deal_history_deal_campo ON freshsale.deal_history (deal_id, campo, detectado_en)",
+
+                # vw_deal_history: el historial con nombres en vez de IDs (etapa, pipeline, dueño, Commit)
+                """CREATE OR ALTER VIEW freshsale.vw_deal_history AS
+                SELECT h.id, h.deal_id, d.name AS deal_name, h.campo, h.tipo,
+                       h.valor_anterior, h.valor_nuevo,
+                       COALESCE(ant.nombre, h.valor_anterior) AS valor_anterior_texto,
+                       COALESCE(nue.nombre, h.valor_nuevo) AS valor_nuevo_texto,
+                       h.fecha_cambio_fs, h.updated_at_fs, h.detectado_en
+                FROM freshsale.deal_history h
+                LEFT JOIN freshsale.deals d ON d.id = h.deal_id
+                OUTER APPLY (SELECT CASE h.campo
+                    WHEN 'deal_stage_id' THEN (SELECT name FROM freshsale.stages WHERE id = TRY_CONVERT(BIGINT, h.valor_anterior))
+                    WHEN 'deal_pipeline_id' THEN (SELECT name FROM freshsale.pipelines WHERE id = TRY_CONVERT(BIGINT, h.valor_anterior))
+                    WHEN 'owner_id' THEN (SELECT display_name FROM freshsale.users WHERE id = TRY_CONVERT(BIGINT, h.valor_anterior))
+                    WHEN 'forecast_category' THEN (SELECT name FROM freshsale.forecast_categories WHERE id = TRY_CONVERT(BIGINT, h.valor_anterior))
+                END AS nombre) ant
+                OUTER APPLY (SELECT CASE h.campo
+                    WHEN 'deal_stage_id' THEN (SELECT name FROM freshsale.stages WHERE id = TRY_CONVERT(BIGINT, h.valor_nuevo))
+                    WHEN 'deal_pipeline_id' THEN (SELECT name FROM freshsale.pipelines WHERE id = TRY_CONVERT(BIGINT, h.valor_nuevo))
+                    WHEN 'owner_id' THEN (SELECT display_name FROM freshsale.users WHERE id = TRY_CONVERT(BIGINT, h.valor_nuevo))
+                    WHEN 'forecast_category' THEN (SELECT name FROM freshsale.forecast_categories WHERE id = TRY_CONVERT(BIGINT, h.valor_nuevo))
+                END AS nombre) nue""",
+
+                # vw_deal_stage_history: cada paso de etapa con origen, destino, días en la etapa y si es ganada
+                """CREATE OR ALTER VIEW freshsale.vw_deal_stage_history AS
+                WITH e AS (
+                    SELECT h.id, h.deal_id, h.tipo,
+                           TRY_CONVERT(BIGINT, h.valor_anterior) AS etapa_origen_id,
+                           TRY_CONVERT(BIGINT, h.valor_nuevo) AS etapa_destino_id,
+                           COALESCE(h.fecha_cambio_fs, h.detectado_en) AS fecha_entrada,
+                           LEAD(COALESCE(h.fecha_cambio_fs, h.detectado_en))
+                               OVER (PARTITION BY h.deal_id ORDER BY h.detectado_en, h.id) AS fecha_salida,
+                           h.detectado_en
+                    FROM freshsale.deal_history h
+                    WHERE h.campo = 'deal_stage_id'
+                )
+                SELECT e.id, e.deal_id, d.name AS deal_name, e.tipo,
+                       e.etapa_origen_id, so.name AS etapa_origen,
+                       e.etapa_destino_id, sd.name AS etapa_destino,
+                       p.name AS pipeline, sd.type AS tipo_etapa,
+                       CAST(CASE WHEN sd.type = 'Closed Won' THEN 1 ELSE 0 END AS BIT) AS es_ganado,
+                       e.fecha_entrada, e.fecha_salida,
+                       DATEDIFF(DAY, e.fecha_entrada, COALESCE(e.fecha_salida, GETDATE())) AS dias_en_etapa,
+                       e.detectado_en
+                FROM e
+                LEFT JOIN freshsale.deals d ON d.id = e.deal_id
+                LEFT JOIN freshsale.stages so ON so.id = e.etapa_origen_id
+                LEFT JOIN freshsale.stages sd ON sd.id = e.etapa_destino_id
+                LEFT JOIN freshsale.pipelines p ON p.id = sd.pipeline_id""",
             ]
 
             for ddl in ddl_statements:
@@ -888,6 +954,11 @@ CREATE TABLE freshsale.contact_lists (
                 "cf_nuevo_logo"
             ], insert_data)
 
+            # Historial: comparar #temp_deals con freshsale.deals antes de sobrescribir (misma transacción)
+            history_stats = self._record_deal_history(cursor)
+            logger.info(f"Deal history: {history_stats['inicial']} inicial, "
+                        f"{history_stats['nuevo']} nuevo, {history_stats['cambio']} cambio")
+
             # MERGE desde tabla temporal a tabla final
             cursor.execute("""
                 MERGE freshsale.deals AS target
@@ -1073,6 +1144,74 @@ CREATE TABLE freshsale.contact_lists (
 
         finally:
             cursor.close()
+
+        return stats
+
+    # Campos vigilados en deal_history y cómo normalizarlos a texto para comparar sin cambios falsos
+    # (montos a DECIMAL(18,2), fechas como AAAA-MM-DD, is_deleted NULL = 0). {a} es el alias de la tabla.
+    _HISTORY_FIELDS = [
+        ("deal_stage_id", "CONVERT(NVARCHAR(500), {a}.deal_stage_id)"),
+        ("deal_pipeline_id", "CONVERT(NVARCHAR(500), {a}.deal_pipeline_id)"),
+        ("amount", "CONVERT(NVARCHAR(500), CONVERT(DECIMAL(18,2), {a}.amount))"),
+        ("expected_close", "CONVERT(NVARCHAR(500), {a}.expected_close, 23)"),
+        ("closed_date", "CONVERT(NVARCHAR(500), {a}.closed_date, 23)"),
+        ("owner_id", "CONVERT(NVARCHAR(500), {a}.owner_id)"),
+        ("probability", "CONVERT(NVARCHAR(500), {a}.probability)"),
+        ("forecast_category", "CONVERT(NVARCHAR(500), {a}.forecast_category)"),
+        ("cf_valor_total_de_contrato", "CONVERT(NVARCHAR(500), CONVERT(DECIMAL(18,2), {a}.cf_valor_total_de_contrato))"),
+        ("cf_tipo_de_servicio", "CONVERT(NVARCHAR(500), {a}.cf_tipo_de_servicio)"),
+        ("is_deleted", "CONVERT(NVARCHAR(500), ISNULL({a}.is_deleted, 0))"),
+    ]
+
+    def _record_deal_history(self, cursor) -> Dict[str, int]:
+        """
+        Inserta en freshsale.deal_history los cambios entre #temp_deals y freshsale.deals.
+        Debe llamarse antes del MERGE y dentro de la misma transacción.
+        """
+        stats = {"inicial": 0, "nuevo": 0, "cambio": 0}
+
+        def values(alias: str) -> str:
+            return ",\n".join(f"('{campo}', {expr.format(a=alias)})" for campo, expr in self._HISTORY_FIELDS)
+
+        changes = ",\n".join(
+            f"('{campo}', {expr.format(a='t')}, {expr.format(a='s')})" for campo, expr in self._HISTORY_FIELDS
+        )
+        fecha_cambio = "CASE WHEN v.campo = 'deal_stage_id' THEN {a}.stage_updated_time ELSE {a}.updated_at END"
+        insert = """INSERT INTO freshsale.deal_history
+            (deal_id, campo, valor_anterior, valor_nuevo, tipo, fecha_cambio_fs, updated_at_fs, detectado_en)"""
+
+        cursor.execute("SELECT SYSDATETIME()")
+        ahora = cursor.fetchone()[0]
+
+        # Punto de partida: deals que ya estaban en la tabla y aún no tienen historial
+        cursor.execute(f"""{insert}
+            SELECT t.id, v.campo, NULL, v.valor, 'inicial', {fecha_cambio.format(a='t')}, t.updated_at, %s
+            FROM freshsale.deals t
+            CROSS APPLY (VALUES {values('t')}) v(campo, valor)
+            WHERE v.valor IS NOT NULL
+              AND NOT EXISTS (SELECT 1 FROM freshsale.deal_history h WHERE h.deal_id = t.id)
+        """, (ahora,))
+        stats["inicial"] = cursor.rowcount
+
+        # Deals que no existían
+        cursor.execute(f"""{insert}
+            SELECT s.id, v.campo, NULL, v.valor, 'nuevo', {fecha_cambio.format(a='s')}, s.updated_at, %s
+            FROM #temp_deals s
+            CROSS APPLY (VALUES {values('s')}) v(campo, valor)
+            WHERE v.valor IS NOT NULL
+              AND NOT EXISTS (SELECT 1 FROM freshsale.deals t WHERE t.id = s.id)
+        """, (ahora,))
+        stats["nuevo"] = cursor.rowcount
+
+        # Cambios (EXCEPT compara bien los NULL)
+        cursor.execute(f"""{insert}
+            SELECT s.id, v.campo, v.anterior, v.nuevo, 'cambio', {fecha_cambio.format(a='s')}, s.updated_at, %s
+            FROM #temp_deals s
+            JOIN freshsale.deals t ON t.id = s.id
+            CROSS APPLY (VALUES {changes}) v(campo, anterior, nuevo)
+            WHERE EXISTS (SELECT v.anterior EXCEPT SELECT v.nuevo)
+        """, (ahora,))
+        stats["cambio"] = cursor.rowcount
 
         return stats
 
