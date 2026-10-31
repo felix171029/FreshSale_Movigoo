@@ -197,7 +197,7 @@ stats["inserted"] = cursor.rowcount
 - `deal_contacts` se carga en `upsert_deals()` (DELETE + INSERT de los deals que trajeron `contact_ids`).
 - `deal_notes`: `main.load_deal_notes()` corre después de deals y pide `/deals/{id}?include=notes` solo para los deals nuevos o con `updated_at` distinto (`loader.deals_changed_ids`); agregar una nota cambia el `updated_at` del deal. Si nunca se cargaron o la última carga falló (`etl_control`, entity `deal_notes`), barre todos los deals. DELETE + INSERT por deal procesado.
 - `vw_deals_estado`: `es_ganado` / `es_perdido` (de `stages.type`), `fecha_ganado` (primera entrada a Closed Won según el historial), dueño, creador y origen con nombre. "Lead convertido" = deal ganado.
-- `vw_contact_grupos` (listas de cada contacto, columna `tipo`) y `vw_deal_origen` (una fila por deal y lista de sus contactos; deals sin lista salen con NULL). **Segmentos:** la API de ventas no los expone (`/contacts/filters` solo trae las vistas estándar, `/segments` da 404); cuando haya fuente, se suman a `vw_contact_grupos` con `tipo = 'segmento'`.
+- `vw_contact_grupos` (listas de cada contacto, columna `tipo`) y `vw_deal_origen` (una fila por deal y lista de sus contactos; deals sin lista salen con NULL). **Origen = solo listas (decisión 30-oct-2026).** Los segmentos viven en el módulo de marketing (`/crm/marketer/mas/`), que no acepta la API key (redirige al login). Si MKT necesita un segmento como origen, lo pasa a una lista estática (prefijo `SEG - `) y el ETL la trae con las demás.
 
 ### Tareas y citas
 
