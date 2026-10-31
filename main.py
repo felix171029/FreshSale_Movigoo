@@ -303,8 +303,15 @@ def main():
     parser = argparse.ArgumentParser(description="ETL Freshsale -> SQL Server")
     parser.add_argument("--full", action="store_true", help="Force full load (ignore last execution)")
     parser.add_argument("--entity", type=str, help="Process only specific entity")
+    parser.add_argument("--exclude", type=str, default="",
+                        help="Entidades a omitir, separadas por coma (ej: contact_lists)")
 
     args = parser.parse_args()
+    excluded = {e.strip() for e in args.exclude.split(",") if e.strip()}
+    unknown = excluded - set(ENTITIES_CONFIG)
+    if unknown:
+        logger.error(f"Unknown entity in --exclude: {', '.join(sorted(unknown))}")
+        sys.exit(1)
 
     logger.info("="*80)
     logger.info("ETL FRESHSALE -> SQL SERVER")
@@ -361,8 +368,10 @@ def main():
             entities_to_process = {
                 name: config
                 for name, config in ENTITIES_CONFIG.items()
-                if config.get("enabled", False)
+                if config.get("enabled", False) and name not in excluded
             }
+            if excluded:
+                logger.info(f"Excluded entities: {', '.join(sorted(excluded))}")
 
         # Procesar cada entidad
         for entity_name, entity_config in entities_to_process.items():
