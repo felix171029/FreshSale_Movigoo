@@ -582,6 +582,19 @@ CREATE TABLE freshsale.contact_lists (
                     FROM freshsale.vw_deal_stage_history sh
                     WHERE sh.deal_id = d.id AND sh.es_ganado = 1
                 ) g""",
+
+                # vw_contact_grupos: listas (y, cuando se puedan extraer, segmentos) de cada contacto
+                """CREATE OR ALTER VIEW freshsale.vw_contact_grupos AS
+                SELECT DISTINCT contact_id, list_id AS grupo_id, list_name AS grupo_nombre, 'lista' AS tipo
+                FROM freshsale.contact_lists""",
+
+                # vw_deal_origen: una fila por deal y grupo (lista/segmento) de sus contactos; deals sin grupo salen con NULL
+                """CREATE OR ALTER VIEW freshsale.vw_deal_origen AS
+                SELECT DISTINCT e.deal_id, e.deal_name, e.created_at, e.pipeline, e.owner_name, e.es_ganado,
+                       e.lead_source, g.tipo, g.grupo_id, g.grupo_nombre
+                FROM freshsale.vw_deals_estado e
+                LEFT JOIN freshsale.deal_contacts dc ON dc.deal_id = e.deal_id
+                LEFT JOIN freshsale.vw_contact_grupos g ON g.contact_id = dc.contact_id""",
             ]
 
             for ddl in ddl_statements:

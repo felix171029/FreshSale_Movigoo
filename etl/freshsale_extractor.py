@@ -222,82 +222,55 @@ class FreshsaleExtractor:
         logger.info(f"Total contacts extracted: {len(all_contacts)}")
         return all_contacts
 
+    # Sin "filter" la API de tareas y citas devuelve 0 registros
+    TASK_FILTERS = ["open", "completed", "overdue"]
+    APPOINTMENT_FILTERS = ["past", "upcoming"]
+
+    def _extract_by_filters(self, path: str, record_key: str, filters: List[str],
+                            last_updated: Optional[datetime] = None) -> List[Dict]:
+        """Pagina el endpoint una vez por filtro y deduplica por id"""
+        by_id = {}
+
+        for f in filters:
+            page = 1
+            while True:
+                params = {"page": page, "per_page": self.page_size, "filter": f}
+
+                if last_updated:
+                    params["updated_at"] = f">{last_updated.isoformat()}"
+
+                data = self._make_request(f"{self.base_url}/{path}", params)
+
+                if not data:
+                    logger.error(f"Failed to extract {record_key} page {page} (filter {f})")
+                    break
+
+                records = data.get(record_key, [])
+                for record in records:
+                    by_id[record["id"]] = record
+
+                logger.info(f"Extracted page {page}: {len(records)} {record_key} (filter {f})")
+
+                total_pages = data.get("meta", {}).get("total_pages")
+                if len(records) == 0 or (total_pages is not None and page >= total_pages):
+                    break
+
+                page += 1
+
+        records = list(by_id.values())
+        self.stats["total_records"] += len(records)
+        logger.info(f"Total {record_key} extracted: {len(records)}")
+        return records
+
     def extract_tasks(self, last_updated: Optional[datetime] = None) -> List[Dict]:
-        """Extrae tareas"""
+        """Extrae tareas (abiertas, completadas y vencidas)"""
         logger.info("Extracting tasks")
-
-        all_tasks = []
-        page = 1
-
-        while True:
-            url = f"{self.base_url}/tasks"
-            params = {
-                "page": page,
-                "per_page": self.page_size
-            }
-
-            if last_updated:
-                params["updated_at"] = f">{last_updated.isoformat()}"
-
-            data = self._make_request(url, params)
-
-            if not data:
-                logger.error(f"Failed to extract tasks page {page}")
-                break
-
-            tasks = data.get("tasks", [])
-            meta = data.get("meta", {})
-
-            all_tasks.extend(tasks)
-            self.stats["total_records"] += len(tasks)
-
-            logger.info(f"Extracted page {page}: {len(tasks)} tasks")
-
-            if len(tasks) == 0:
-                break
-
-            page += 1
-
-        logger.info(f"Total tasks extracted: {len(all_tasks)}")
-        return all_tasks
+        return self._extract_by_filters("tasks", "tasks", self.TASK_FILTERS, last_updated)
 
     def extract_appointments(self, last_updated: Optional[datetime] = None) -> List[Dict]:
-        """Extrae citas"""
+        """Extrae citas (pasadas y próximas)"""
         logger.info("Extracting appointments")
-
-        all_appointments = []
-        page = 1
-
-        while True:
-            url = f"{self.base_url}/appointments"
-            params = {
-                "page": page,
-                "per_page": self.page_size
-            }
-
-            if last_updated:
-                params["updated_at"] = f">{last_updated.isoformat()}"
-
-            data = self._make_request(url, params)
-
-            if not data:
-                logger.error(f"Failed to extract appointments page {page}")
-                break
-
-            appointments = data.get("appointments", [])
-
-            all_appointments.extend(appointments)
-            self.stats["total_records"] += len(appointments)
-
-            logger.info(f"Extracted page {page}: {len(appointments)} appointments")
-
-            if len(appointments) == 0:
-                break
-
-            page += 1
-
-        logger.info(f"Total appointments extracted: {len(all_appointments)}")
-        return all_appointments
+        return self._extract_by_filters("appointments", "appointments", self.APPOINTMENT_FILTERS, last_updated)
 
     def extract_sales_activities(self, last_updated: Optional[datetime] = None) -> List[Dict]:
         """Extrae actividades de ventas"""
@@ -664,6 +637,32 @@ class FreshsaleExtractor:
             "sales_activities": ("sales_activities", "sales_activities"),
             "products":         ("cpq/products", "products"),
         }
+
+        # Tareas y citas: sin "filter" la API devuelve 0, así que se barre cada filtro
+        if entity_name in ("tasks", "appointments"):
+            filters = self.TASK_FILTERS if entity_name == "tasks" else self.APPOINTMENT_FILTERS
+            url = f"{self.base_url}/{entity_name}"
+            active_ids = set()
+
+            for f in filters:
+                page = 1
+                while True:
+                    data = self._make_request(url, {"page": page, "per_page": self.page_size, "filter": f})
+                    if not data:
+                        logger.warning(f"ID sweep failed for {entity_name} page {page} filter {f}")
+                        return None  # API failure — caller must skip reconciliation
+
+                    records = data.get(entity_name, [])
+                    active_ids.update(r["id"] for r in records if r.get("id"))
+
+                    total_pages = data.get("meta", {}).get("total_pages")
+                    if len(records) == 0 or (total_pages is not None and page >= total_pages):
+                        break
+                    page += 1
+
+            self.stats["total_records"] += len(active_ids)
+            logger.info(f"ID sweep {entity_name}: {len(active_ids)} active IDs in Freshsales")
+            return active_ids
 
         if entity_name not in entity_map:
             return None

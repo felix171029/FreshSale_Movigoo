@@ -197,6 +197,12 @@ stats["inserted"] = cursor.rowcount
 - `deal_contacts` se carga en `upsert_deals()` (DELETE + INSERT de los deals que trajeron `contact_ids`).
 - `deal_notes`: `main.load_deal_notes()` corre después de deals y pide `/deals/{id}?include=notes` solo para los deals nuevos o con `updated_at` distinto (`loader.deals_changed_ids`); agregar una nota cambia el `updated_at` del deal. Si nunca se cargaron o la última carga falló (`etl_control`, entity `deal_notes`), barre todos los deals. DELETE + INSERT por deal procesado.
 - `vw_deals_estado`: `es_ganado` / `es_perdido` (de `stages.type`), `fecha_ganado` (primera entrada a Closed Won según el historial), dueño, creador y origen con nombre. "Lead convertido" = deal ganado.
+- `vw_contact_grupos` (listas de cada contacto, columna `tipo`) y `vw_deal_origen` (una fila por deal y lista de sus contactos; deals sin lista salen con NULL). **Segmentos:** la API de ventas no los expone (`/contacts/filters` solo trae las vistas estándar, `/segments` da 404); cuando haya fuente, se suman a `vw_contact_grupos` con `tipo = 'segmento'`.
+
+### Tareas y citas
+
+- Sin `filter`, `/tasks` y `/appointments` devuelven 0. `extract_tasks()` recorre `TASK_FILTERS` (open, completed, overdue) y `extract_appointments()` `APPOINTMENT_FILTERS` (past, upcoming), deduplicando por id. `extract_all_ids()` hace lo mismo para la reconciliación.
+- `sales_activities` no necesita filtro: está vacío porque el equipo no registra actividades.
 
 ### Historial de deals (`deal_history`)
 
