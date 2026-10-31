@@ -36,6 +36,13 @@ test_*.json
 *.swo
 *~
 .DS_Store
+*.code-workspace
+
+# Claude Code / herramientas de agentes
+.agents/
+.claude/
+.superpowers/
+skills-lock.json
 
 # Backups y temporales
 *.bak
