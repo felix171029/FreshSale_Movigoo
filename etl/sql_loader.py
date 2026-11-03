@@ -9,6 +9,8 @@ from datetime import datetime
 from dateutil import parser as date_parser
 import json
 
+from etl import historial
+
 logger = logging.getLogger(__name__)
 
 
@@ -596,6 +598,9 @@ CREATE TABLE freshsale.contact_lists (
                 LEFT JOIN freshsale.deal_contacts dc ON dc.deal_id = e.deal_id
                 LEFT JOIN freshsale.vw_contact_grupos g ON g.contact_id = dc.contact_id""",
             ]
+
+            # Historial de tareas, citas y notas (etl/historial.py) + vista vw_actividad_history
+            ddl_statements += historial.ddl()
 
             for ddl in ddl_statements:
                 try:

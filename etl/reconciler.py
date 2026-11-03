@@ -6,6 +6,7 @@ no existen en Freshsales comparando IDs activos vs IDs en SQL Server.
 import logging
 from typing import Dict, Set
 
+from etl import historial
 from etl.sql_loader import SQLServerLoader
 
 logger = logging.getLogger(__name__)
@@ -66,6 +67,17 @@ def reconcile_deletions(loader, entity_name: str, table_name: str,
         # Insertar IDs a borrar en tabla temporal para evitar límites de parámetros
         cursor.execute("CREATE TABLE #ids_to_delete (id BIGINT NOT NULL)")
         SQLServerLoader._bulk_insert(cursor, "#ids_to_delete", ["id"], [(id_val,) for id_val in ids_to_delete])
+
+        # Historial: dejar constancia del registro antes de borrarlo (misma transacción)
+        if entity_name in historial.ENTIDADES:
+            n = historial.registrar_eliminados(cursor, entity_name, "t.id IN (SELECT id FROM #ids_to_delete)")
+            logger.info(f"Reconcile {entity_name}: {n} filas 'eliminado' en el historial")
+        elif entity_name == "deals":
+            cursor.execute("""INSERT INTO freshsale.deal_history
+                    (deal_id, campo, valor_anterior, valor_nuevo, tipo, fecha_cambio_fs, updated_at_fs)
+                SELECT t.id, 'registro', LEFT(CONVERT(NVARCHAR(MAX), t.name), 500), NULL, 'eliminado', NULL, t.updated_at
+                FROM freshsale.deals t WHERE t.id IN (SELECT id FROM #ids_to_delete)""")
+            logger.info(f"Reconcile deals: {cursor.rowcount} filas 'eliminado' en deal_history")
 
         # Cascada: borrar deal_products antes que deals
         if entity_name == "deals":

@@ -189,6 +189,7 @@ stats["inserted"] = cursor.rowcount
 | `deal_history` | `id BIGINT IDENTITY` | Historial de cambios de deals. **Nunca se borra** |
 | `deal_contacts` | `(deal_id, contact_id)` | Todos los contactos de cada deal (`deals.contact_id` es solo el primero) |
 | `deal_notes` | `(id, deal_id)` | Notas de los deals. Los informes leen `deal_id`, `created_at`, `description` |
+| `task_history` / `appointment_history` / `deal_note_history` | `id BIGINT IDENTITY` | Historial de tareas, citas y notas. **Nunca se borran** |
 | `lead_sources` | `id BIGINT` | Catálogo de orígenes (`deals.lead_source_id`) |
 
 ### Origen, creador y notas
@@ -212,6 +213,18 @@ stats["inserted"] = cursor.rowcount
 - `tipo`: `inicial` (estado al activar el historial, 30-oct-2026), `nuevo` (deal que no existía), `cambio`. Al contar cambios, excluir `inicial`.
 - `fecha_cambio_fs`: hora del cambio según Freshsales (`stage_updated_time` para la etapa, `updated_at` para el resto). `detectado_en`: hora en que lo vio el ETL.
 - Vistas: `vw_deal_history` (con nombres en vez de IDs) y `vw_deal_stage_history` (etapa origen/destino, días en la etapa, `es_ganado`).
+- Si el reconciler borra un deal que ya no existe en Freshsales, antes deja una fila `tipo = 'eliminado'`, `campo = 'registro'` con el nombre del deal en `valor_anterior`.
+
+### Historial de tareas, citas y notas (`etl/historial.py`)
+
+- Mismo esquema que `deal_history`, pero con valores `NVARCHAR(MAX)`: `task_history` (`task_id`), `appointment_history` (`appointment_id`) y `deal_note_history` (`note_id`, `deal_id`). **Nunca se borran.**
+- Campos vigilados y configuración en `historial.ENTIDADES`. Tareas: título, descripción, vencimiento, estado, dueño, a qué está asociada, completada, `is_deleted`. Citas: título, descripción, inicio, fin, lugar, dueño, a qué está asociada, `is_deleted`. Notas: texto y creador.
+- `tipo`: `inicial`, `nuevo`, `cambio`, `eliminado`. Las fechas se comparan como `AAAA-MM-DD hh:mi:ss` (estilo 120) porque las tablas son `DATETIME` y las temporales `DATETIME2`.
+- `upsert_tasks()` / `upsert_appointments()` llaman a `historial.registrar_cambios()` antes del MERGE. Los eliminados los registra el reconciler (`historial.registrar_eliminados()`) antes del DELETE.
+- `upsert_deal_notes()` carga las notas en `#temp_deal_notes` y registra el historial antes del DELETE + INSERT: nota nueva, texto editado, o nota borrada (solo de los deals procesados, que vienen completos; los deals cuya lectura falló no se tocan).
+- Vista `vw_actividad_history`: las tres en una (`entidad` = tarea / cita / nota), con `deal_id` y `deal_name` y nombres de usuario en vez de IDs.
+- Al activarse (nov-2026) el equipo casi no usa tareas ni citas: 0 en los 618 deals; las 2 tareas existentes son automáticas sobre leads. Las notas sí se usan.
+
 - **Ojo con `_bulk_insert`:** usa un `INSERT ... VALUES` multi-fila; si en una columna se mezclan textos y números, SQL Server convierte todo al tipo numérico del literal y puede redondear. La API entrega los montos como texto: no convertirlos a `float` en Python.
 
 ## Important Notes

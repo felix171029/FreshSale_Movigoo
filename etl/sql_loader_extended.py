@@ -5,6 +5,8 @@ Extensión del SQL Loader con métodos para todas las entidades
 from typing import Dict, List
 import logging
 
+from etl import historial
+
 logger = logging.getLogger(__name__)
 
 
@@ -382,6 +384,10 @@ def upsert_tasks(loader, tasks: List[Dict]) -> Dict[str, int]:
                 "creator_id","targetable_type","targetable_id","created_at","updated_at","completed_at","is_deleted"
             ], insert_data)
 
+        # Historial: comparar #temp_tasks con freshsale.tasks antes de sobrescribir (misma transacción)
+        h = historial.registrar_cambios(cursor, "tasks", "#temp_tasks")
+        logger.info(f"Task history: {h['inicial']} inicial, {h['nuevo']} nuevo, {h['cambio']} cambio")
+
         logger.info("Executing MERGE...")
         cursor.execute("""
             MERGE freshsale.tasks AS target
@@ -462,6 +468,10 @@ def upsert_appointments(loader, appointments: List[Dict]) -> Dict[str, int]:
                 "id","title","description","from_date","end_date","time_zone",
                 "location","creator_id","owner_id","targetable_type","targetable_id","created_at","updated_at","is_deleted"
             ], insert_data)
+
+        # Historial: comparar #temp_appointments con freshsale.appointments antes de sobrescribir
+        h = historial.registrar_cambios(cursor, "appointments", "#temp_appointments")
+        logger.info(f"Appointment history: {h['inicial']} inicial, {h['nuevo']} nuevo, {h['cambio']} cambio")
 
         cursor.execute("""
             MERGE freshsale.appointments AS target
@@ -1191,10 +1201,6 @@ def upsert_deal_notes(loader, deal_ids: List[int], notes: List[Dict]) -> Dict[st
         cursor.execute("CREATE TABLE #temp_note_deal_ids (id BIGINT NOT NULL)")
         loader._bulk_insert(cursor, "#temp_note_deal_ids", ["id"], [(d,) for d in deal_ids])
 
-        cursor.execute("""DELETE FROM freshsale.deal_notes
-            WHERE deal_id IN (SELECT id FROM #temp_note_deal_ids)""")
-        deleted = cursor.rowcount
-
         # Una nota puede venir repetida para el mismo deal: se deja una por (id, deal_id)
         unique = {(n["id"], n["deal_id"]): n for n in notes if n.get("id")}
         insert_data = [(
@@ -1206,11 +1212,30 @@ def upsert_deal_notes(loader, deal_ids: List[int], notes: List[Dict]) -> Dict[st
             loader.parse_date(n.get("updated_at")),
         ) for n in unique.values()]
 
-        loader._bulk_insert(cursor, "freshsale.deal_notes", [
+        cursor.execute("""CREATE TABLE #temp_deal_notes (
+            id BIGINT NOT NULL, deal_id BIGINT NOT NULL, description NVARCHAR(MAX) NULL,
+            creator_id BIGINT NULL, created_at DATETIME NULL, updated_at DATETIME NULL)""")
+        loader._bulk_insert(cursor, "#temp_deal_notes", [
             "id", "deal_id", "description", "creator_id", "created_at", "updated_at"
         ], insert_data)
-        stats["inserted"] = len(insert_data)
 
+        # Historial antes del DELETE (misma transacción): notas nuevas, editadas y borradas
+        # de los deals procesados (esos deals vinieron completos en #temp_deal_notes)
+        h = historial.registrar_cambios(
+            cursor, "deal_notes", "#temp_deal_notes",
+            alcance_eliminados="t.deal_id IN (SELECT id FROM #temp_note_deal_ids)")
+        logger.info(f"Note history: {h['inicial']} inicial, {h['nuevo']} nuevo, "
+                    f"{h['cambio']} cambio, {h['eliminado']} eliminado")
+
+        cursor.execute("""DELETE FROM freshsale.deal_notes
+            WHERE deal_id IN (SELECT id FROM #temp_note_deal_ids)""")
+        deleted = cursor.rowcount
+
+        cursor.execute("""INSERT INTO freshsale.deal_notes (id, deal_id, description, creator_id, created_at, updated_at)
+            SELECT id, deal_id, description, creator_id, created_at, updated_at FROM #temp_deal_notes""")
+        stats["inserted"] = cursor.rowcount
+
+        cursor.execute("DROP TABLE #temp_deal_notes")
         cursor.execute("DROP TABLE #temp_note_deal_ids")
         loader.connection.commit()
         logger.info(f"Deal notes loaded: {deleted} deleted, {stats['inserted']} inserted "
